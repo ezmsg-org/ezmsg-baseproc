@@ -8,13 +8,13 @@ sys.path.insert(0, os.path.abspath("../../src"))
 
 # -- Project information --------------------------
 
-project = "ezmsg.example"
+project = "ezmsg.baseproc"
 copyright = "2025, ezmsg Contributors"
 author = "ezmsg Contributors"
 
 # The version is managed by hatch-vcs and stored in __version__.py
 try:
-    from ezmsg.example.__version__ import version as release
+    from ezmsg.baseproc.__version__ import version as release
 except ImportError:
     release = "unknown"
 
@@ -80,11 +80,11 @@ html_theme = "pydata_sphinx_theme"
 html_static_path = ["_static"]
 
 # Set the base URL for the documentation
-html_baseurl = "https://www.ezmsg.org/ezmsg-example/"
+html_baseurl = "https://www.ezmsg.org/ezmsg-baseproc/"
 
 html_theme_options = {
     "logo": {
-        "text": f"ezmsg.example {version}",
+        "text": f"ezmsg.baseproc {version}",
         "link": "https://ezmsg.org",
     },
     "header_links_before_dropdown": 4,
@@ -93,7 +93,7 @@ html_theme_options = {
     "icon_links": [
         {
             "name": "GitHub",
-            "url": "https://github.com/ezmsg-org/ezmsg-example",
+            "url": "https://github.com/ezmsg-org/ezmsg-baseproc",
             "icon": "fa-brands fa-github",
         },
         {
@@ -110,7 +110,7 @@ html_last_updated_fmt = "%Y-%m-%d"
 # -- Options for linkcode -----------------------------
 
 branch = "main"
-code_url = f"https://github.com/ezmsg-org/ezmsg-example/blob/{branch}/"
+code_url = f"https://github.com/ezmsg-org/ezmsg-baseproc/blob/{branch}/"
 
 
 def linkcode_resolve(domain, info):

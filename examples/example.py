@@ -1,17 +1,17 @@
-"""Example usage of ezmsg-example package."""
+"""Example usage of ezmsg-baseproc package."""
 
 import asyncio
 
 import ezmsg.core as ez
 
 # Import your units from the package
-# from ezmsg.example import MyUnit
+# from ezmsg.baseproc import MyUnit
 
 
 class ExampleSettings(ez.Settings):
     """Settings for ExampleUnit."""
 
-    message: str = "Hello from ezmsg-example!"
+    message: str = "Hello from ezmsg-baseproc!"
 
 
 class ExampleUnit(ez.Unit):
@@ -32,8 +32,8 @@ class ExampleUnit(ez.Unit):
 
 async def main():
     """Run the example."""
-    print("ezmsg-example loaded successfully!")
-    print(f"Version: {__import__('ezmsg.example').__version__}")
+    print("ezmsg-baseproc loaded successfully!")
+    print(f"Version: {__import__('ezmsg.baseproc').__version__}")
 
     # Example: Create and run a simple system
     # system = ExampleSystem()

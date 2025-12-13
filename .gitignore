@@ -120,7 +120,7 @@ cython_debug/
 .ruff_cache/
 
 # hatch-vcs generated version file
-src/ezmsg/example/__version__.py
+src/ezmsg/baseproc/__version__.py
 
 # uv lockfile (optional - comment if you want to track it)
 uv.lock

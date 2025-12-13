@@ -1,16 +1,19 @@
 [project]
-name = "ezmsg-example"
-description = "Short description of your ezmsg package"
+name = "ezmsg-baseproc"
+description = "Base processor classes and protocols for ezmsg signal processing pipelines"
 authors = [
-  { name = "Your Name", email = "your.email@example.com" },
+  { name = "Griffin Milsap", email = "griffin.milsap@gmail.com" },
+  { name = "Preston Peranich", email = "pperanich@gmail.com" },
+  { name = "Chadwick Boulay", email = "chadwick.boulay@gmail.com" },
+  { name = "Kyle McGraw", email = "kmcgraw@blackrockneuro.com" },
 ]
 license = "MIT"
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["version"]
 dependencies = [
-  "ezmsg>=3.6.0",
-  "numpy>=1.26.0",
+  "ezmsg[axisarray]>=3.6.0",
+  "typing-extensions>=4.0.0",
 ]
 
 [dependency-groups]
@@ -36,7 +39,7 @@ docs = [
 
 # Uncomment if your package provides CLI commands
 # [project.scripts]
-# ezmsg-example = "ezmsg.example.main:main"
+# ezmsg-baseproc = "ezmsg.baseproc.main:main"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -46,7 +49,7 @@ build-backend = "hatchling.build"
 source = "vcs"
 
 [tool.hatch.build.hooks.vcs]
-version-file = "src/ezmsg/example/__version__.py"
+version-file = "src/ezmsg/baseproc/__version__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ezmsg"]
@@ -65,7 +68,7 @@ exclude = ["*/__version__.py"]
 select = ["E", "F", "I", "W"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["ezmsg.package"]
+known-first-party = ["ezmsg.baseproc"]
 known-third-party = ["ezmsg"]
 
 [tool.uv.sources]
