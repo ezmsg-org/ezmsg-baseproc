@@ -31,20 +31,29 @@ def _setup_logger(append: bool = False) -> logging.Logger:
     write_header = True
     if logpath.exists() and logpath.is_file():
         if append:
-            with open(logpath) as f:
-                first_line = f.readline().rstrip()
-            if first_line == HEADER:
+            try:
+                with open(logpath) as f:
+                    first_line = f.readline().rstrip()
+                if first_line == HEADER:
+                    write_header = False
+                else:
+                    # Remove the file if appending, but headers do not match
+                    ezmsg_logger = logging.getLogger("ezmsg")
+                    ezmsg_logger.warning(
+                        "Profiling header mismatch: please make sure to use the same version of "
+                        "ezmsg for all processes."
+                    )
+                    logpath.unlink()
+            except (PermissionError, OSError):
+                # On Windows, file may be locked by another process - just append
                 write_header = False
-            else:
-                # Remove the file if appending, but headers do not match
-                ezmsg_logger = logging.getLogger("ezmsg")
-                ezmsg_logger.warning(
-                    "Profiling header mismatch: please make sure to use the same version of ezmsg for all processes."
-                )
-                logpath.unlink()
         else:
             # Remove the file if not appending
-            logpath.unlink()
+            try:
+                logpath.unlink()
+            except (PermissionError, OSError):
+                # On Windows, file may be locked by another process - continue anyway
+                pass
 
     # Create a logger with the name "ezprofile"
     _logger = logging.getLogger("ezprofile")
