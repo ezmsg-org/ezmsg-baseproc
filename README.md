@@ -40,7 +40,7 @@ ezmsg.baseproc/
 ```python
 from dataclasses import dataclass
 from ezmsg.baseproc import BaseTransformer
-from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray, replace
 
 @dataclass
 class MySettings:
@@ -48,7 +48,7 @@ class MySettings:
 
 class MyTransformer(BaseTransformer[MySettings, AxisArray, AxisArray]):
     def _process(self, message: AxisArray) -> AxisArray:
-        return message.replace(data=message.data * self.settings.scale)
+        return replace(message, data=message.data * self.settings.scale)
 ```
 
 ### Creating a Stateful Transformer
