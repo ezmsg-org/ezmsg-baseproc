@@ -4,6 +4,8 @@ import functools
 import typing
 from dataclasses import dataclass
 
+import ezmsg.core as ez
+
 from .util.message import SampleMessage
 
 # --- Processor state decorator ---
@@ -12,7 +14,7 @@ processor_state = functools.partial(dataclass, unsafe_hash=True, frozen=False, i
 # --- Type variables for protocols and processors ---
 MessageInType = typing.TypeVar("MessageInType")
 MessageOutType = typing.TypeVar("MessageOutType")
-SettingsType = typing.TypeVar("SettingsType")
+SettingsType = typing.TypeVar("SettingsType", bound=ez.Settings)
 StateType = typing.TypeVar("StateType")
 
 
