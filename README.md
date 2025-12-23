@@ -1,6 +1,6 @@
 # ezmsg-baseproc
 
-Base processor classes and protocols for building signal processing pipelines in [ezmsg](https://github.com/ezmsg-org/ezmsg).
+Base processor classes and protocols for building message-processing components in [ezmsg](https://github.com/ezmsg-org/ezmsg).
 
 ## Installation
 
@@ -8,30 +8,26 @@ Base processor classes and protocols for building signal processing pipelines in
 pip install ezmsg-baseproc
 ```
 
+Or install the latest development version:
+
+```bash
+pip install git+https://github.com/ezmsg-org/ezmsg-baseproc@dev
+```
+
 ## Overview
 
-This package provides the foundational processor architecture for ezmsg signal processing:
+``ezmsg-baseproc`` provides abstract base classes for creating message processors that can be used both standalone and within ezmsg pipelines. The package offers a consistent pattern for building:
 
-- **Protocols** - Type definitions for processors, transformers, consumers, and producers
-- **Base Classes** - Abstract base classes for building stateless and stateful processors
-- **Composite Processors** - Classes for chaining processors into pipelines
-- **Unit Wrappers** - ezmsg Unit base classes that wrap processors for graph integration
+* **Protocols** - Type definitions for processors, transformers, consumers, and producers
+* **Processors** - Transform input messages to output messages
+* **Producers** - Generate output messages without requiring input
+* **Consumers** - Accept input messages without producing output
+* **Transformers** - A specific type of processor with typed input/output
+* **Stateful variants** - Processors that maintain state across invocations
+* **Adaptive transformers** - Transformers that can be trained via ``partial_fit``
+* **Composite processors** - Chain multiple processors together efficiently
 
-## Module Structure
-
-```
-ezmsg.baseproc/
-├── protocols.py      # Protocol definitions and type variables
-├── processor.py      # Base non-stateful processors
-├── stateful.py       # Stateful processor base classes
-├── composite.py      # CompositeProcessor and CompositeProducer
-├── units.py          # ezmsg Unit wrappers
-└── util/
-    ├── asio.py           # Async/sync utilities
-    ├── message.py        # SampleMessage definitions
-    ├── profile.py        # Profiling decorators
-    └── typeresolution.py # Type resolution helpers
-```
+All base classes support both synchronous and asynchronous operation, making them suitable for offline analysis and real-time streaming applications.
 
 ## Usage
 
@@ -88,6 +84,7 @@ We use [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for devel
 2. Clone and cd into the repository
 3. Run `uv sync` to create a `.venv` and install dependencies
 4. Run `uv run pytest tests` to run tests
+5. (Optional) Install pre-commit hooks: `uv run pre-commit install`
 
 ## License
 
