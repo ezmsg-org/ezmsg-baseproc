@@ -7,12 +7,26 @@ signal processing pipelines in ezmsg.
 
 from .__version__ import __version__ as __version__
 
+# Clock and Counter
+from .clock import (
+    Clock,
+    ClockProducer,
+    ClockSettings,
+    ClockState,
+)
+
 # Composite processor classes
 from .composite import (
     CompositeProcessor,
     CompositeProducer,
     CompositeStateful,
     _get_processor_message_type,
+)
+from .counter import (
+    Counter,
+    CounterSettings,
+    CounterTransformer,
+    CounterTransformerState,
 )
 
 # Base processor classes (non-stateful)
@@ -152,4 +166,13 @@ __all__ = [
     # Type utilities
     "check_message_type_compatibility",
     "resolve_typevar",
+    # Clock and Counter
+    "Clock",
+    "ClockProducer",
+    "ClockSettings",
+    "ClockState",
+    "Counter",
+    "CounterSettings",
+    "CounterTransformer",
+    "CounterTransformerState",
 ]
