@@ -80,9 +80,9 @@ do not inherit from `BaseStatefulProcessor` and `BaseStatefulProducer`. They acc
 | 3   | `BaseConsumerUnit`             | 1       | `ConsumerType`             |
 | 4   | `BaseTransformerUnit`          | 1       | `TransformerType`          |
 | 5   | `BaseAdaptiveTransformerUnit`  | 1       | `AdaptiveTransformerType`  |
-| 6   | `BaseClockDrivenProducerUnit`  | 1       | `ClockDrivenProducerType`  |
+| 6   | `BaseClockDrivenUnit`  | 1       | `ClockDrivenProducerType`  |
 
-Note, it is strongly recommended to use `BaseConsumerUnit`, `BaseTransformerUnit`, `BaseAdaptiveTransformerUnit`, or `BaseClockDrivenProducerUnit` for implementing concrete subclasses rather than `BaseProcessorUnit`.
+Note, it is strongly recommended to use `BaseConsumerUnit`, `BaseTransformerUnit`, `BaseAdaptiveTransformerUnit`, or `BaseClockDrivenUnit` for implementing concrete subclasses rather than `BaseProcessorUnit`.
 
 
 ## Implementing a custom standalone processor

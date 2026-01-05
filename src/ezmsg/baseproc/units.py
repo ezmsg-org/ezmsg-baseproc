@@ -246,7 +246,7 @@ class BaseAdaptiveTransformerUnit(
         await self.processor.apartial_fit(msg)
 
 
-class BaseClockDrivenProducerUnit(
+class BaseClockDrivenUnit(
     BaseProcessorUnit[SettingsType],
     ABC,
     typing.Generic[SettingsType, ClockDrivenProducerType],
@@ -260,7 +260,7 @@ class BaseClockDrivenProducerUnit(
 
     Implement a new Unit as follows::
 
-        class SinGeneratorUnit(BaseClockDrivenProducerUnit[
+        class SinGeneratorUnit(BaseClockDrivenUnit[
             SinGeneratorSettings,     # SettingsType (must extend ClockDrivenSettings)
             SinProducer,              # ClockDrivenProducerType
         ]):

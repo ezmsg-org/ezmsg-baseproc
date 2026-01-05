@@ -9,7 +9,7 @@ from .clockdriven import (
     ClockDrivenState,
 )
 from .protocols import processor_state
-from .units import BaseClockDrivenProducerUnit
+from .units import BaseClockDrivenUnit
 
 
 class CounterSettings(ClockDrivenSettings):
@@ -57,7 +57,7 @@ class CounterTransformer(BaseClockDrivenProducer[CounterSettings, CounterTransfo
         )
 
 
-class Counter(BaseClockDrivenProducerUnit[CounterSettings, CounterTransformer]):
+class Counter(BaseClockDrivenUnit[CounterSettings, CounterTransformer]):
     """
     Transforms clock ticks into monotonically increasing counter values as AxisArray.
 
