@@ -11,6 +11,10 @@ def resolve_typevar(cls: type, target_typevar: typing.TypeVar) -> type:
     and checks the original bases of each class in the MRO for the TypeVar.
     If the TypeVar is found, it returns the concrete type bound to it.
     If the TypeVar is not found, it raises a TypeError.
+
+    If the resolved type is itself a TypeVar, this function recursively
+    resolves it until a concrete type is found.
+
     Args:
         cls (type): The class to inspect.
         target_typevar (typing.TypeVar): The TypeVar to resolve.
@@ -30,7 +34,11 @@ def resolve_typevar(cls: type, target_typevar: typing.TypeVar) -> type:
                 index = params.index(target_typevar)
                 args = typing.get_args(orig_base)
                 try:
-                    return args[index]
+                    resolved = args[index]
+                    # If the resolved type is itself a TypeVar, resolve it recursively
+                    if isinstance(resolved, typing.TypeVar):
+                        return resolve_typevar(cls, resolved)
+                    return resolved
                 except IndexError:
                     pass
     raise TypeError(f"Could not resolve {target_typevar} in {cls}")

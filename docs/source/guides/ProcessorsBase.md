@@ -6,12 +6,13 @@ The `ezmsg.baseproc` module contains the base classes for message processors. Th
 
 ### Generic TypeVars
 
-| Idx | Class                 | Description                                                                |
-|-----|-----------------------|----------------------------------------------------------------------------|
-| 1   | `MessageInType` (Mi)  | for messages passed to a consumer, processor, or transformer               |
-| 2   | `MessageOutType` (Mo) | for messages returned by a producer, processor, or transformer             |
-| 3   | `SettingsType`        | bound to ez.Settings                                                       |
-| 4   | `StateType` (St)      | bound to ProcessorState which is simply ez.State with a `hash: int` field. |
+| Idx | Class                      | Description                                                                |
+|-----|----------------------------|----------------------------------------------------------------------------|
+| 1   | `MessageInType` (Mi)       | for messages passed to a consumer, processor, or transformer               |
+| 2   | `MessageOutType` (Mo)      | for messages returned by a producer, processor, or transformer             |
+| 3   | `SettingsType`             | bound to ez.Settings                                                       |
+| 4   | `StateType` (St)           | bound to ProcessorState which is simply ez.State with a `hash: int` field. |
+| 5   | `ClockDrivenSettingsType`  | bound to `ClockDrivenSettings` (provides `fs` and `n_time`)                |
 
 
 ### Protocols
@@ -47,6 +48,7 @@ Note: `__call__` and `partial_fit` both have asynchronous alternatives: `__acall
 | 10  | `BaseAsyncTransformer`    | 8      | 8        | `__acall__` wraps abstract `_aprocess`; `__call__` runs `__acall__`.                       |
 | 11  | `CompositeProcessor`      | 1      | 5        | Methods iterate over sequence of processors created in `_initialize_processors`.           |
 | 12  | `CompositeProducer`       | 2      | 6        | Similar to `CompositeProcessor`, but first processor must be a producer.                   |
+| 13  | `BaseClockDrivenProducer` | 5      | 8        | Clock-driven data generator. Implements `_produce(n_samples, time_axis)`.                  |
 
 NOTES:
 1. Producers do not inherit from `BaseProcessor`, so concrete implementations should subclass `BaseProducer` or `BaseStatefulProducer`.
@@ -60,25 +62,27 @@ do not inherit from `BaseStatefulProcessor` and `BaseStatefulProducer`. They acc
 
 ### Generic TypeVars for ezmsg Units
 
-| Idx | Class                     | Description                                                                                                      |
-|-----|---------------------------|------------------------------------------------------------------------------------------------------------------|
-| 5   | `ProducerType`            | bound to `BaseProducer` (hence, also `BaseStatefulProducer`, `CompositeProducer`)                                |
-| 6   | `ConsumerType`            | bound to `BaseConsumer`, `BaseStatefulConsumer`                                                                  |
-| 7   | `TransformerType`         | bound to `BaseTransformer`, `BaseStatefulTransformer`, `CompositeProcessor` (hence, also `BaseAsyncTransformer`) |
-| 8   | `AdaptiveTransformerType` | bound to `BaseAdaptiveTransformer`                                                                               |
+| Idx | Class                      | Description                                                                                                      |
+|-----|----------------------------|------------------------------------------------------------------------------------------------------------------|
+| 5   | `ProducerType`             | bound to `BaseProducer` (hence, also `BaseStatefulProducer`, `CompositeProducer`)                                |
+| 6   | `ConsumerType`             | bound to `BaseConsumer`, `BaseStatefulConsumer`                                                                  |
+| 7   | `TransformerType`          | bound to `BaseTransformer`, `BaseStatefulTransformer`, `CompositeProcessor` (hence, also `BaseAsyncTransformer`) |
+| 8   | `AdaptiveTransformerType`  | bound to `BaseAdaptiveTransformer`                                                                               |
+| 9   | `ClockDrivenProducerType`  | bound to `BaseClockDrivenProducer`                                                                               |
 
 
 ### Abstract implementations (Base Classes) for ezmsg Units using processors:
 
-| Idx | Class                         | Parents | Expected TypeVars         |
-|-----|-------------------------------|---------|---------------------------|
-| 1   | `BaseProcessorUnit`           | -       | -                         |
-| 2   | `BaseProducerUnit`            | -       | `ProducerType`            |
-| 3   | `BaseConsumerUnit`            | 1       | `ConsumerType`            |
-| 4   | `BaseTransformerUnit`         | 1       | `TransformerType`         |
-| 5   | `BaseAdaptiveTransformerUnit` | 1       | `AdaptiveTransformerType` |
+| Idx | Class                          | Parents | Expected TypeVars          |
+|-----|--------------------------------|---------|----------------------------|
+| 1   | `BaseProcessorUnit`            | -       | -                          |
+| 2   | `BaseProducerUnit`             | -       | `ProducerType`             |
+| 3   | `BaseConsumerUnit`             | 1       | `ConsumerType`             |
+| 4   | `BaseTransformerUnit`          | 1       | `TransformerType`          |
+| 5   | `BaseAdaptiveTransformerUnit`  | 1       | `AdaptiveTransformerType`  |
+| 6   | `BaseClockDrivenProducerUnit`  | 1       | `ClockDrivenProducerType`  |
 
-Note, it is strongly recommended to use `BaseConsumerUnit`, `BaseTransformerUnit`, or `BaseAdaptiveTransformerUnit` for implementing concrete subclasses rather than `BaseProcessorUnit`.
+Note, it is strongly recommended to use `BaseConsumerUnit`, `BaseTransformerUnit`, `BaseAdaptiveTransformerUnit`, or `BaseClockDrivenProducerUnit` for implementing concrete subclasses rather than `BaseProcessorUnit`.
 
 
 ## Implementing a custom standalone processor
@@ -125,6 +129,7 @@ flowchart TD
     * For stateful processors that need to respond to a change in the incoming data, implement `_hash_message`.
     * For adaptive transformers, implement `partial_fit`.
     * For chains of processors (`CompositeProcessor`/ `CompositeProducer`), need to implement `_initialize_processors`.
+    * For clock-driven producers (`BaseClockDrivenProducer`), implement `_reset_state(time_axis)` and `_produce(n_samples, time_axis)`. See the [clock-driven how-to guide](how-tos/processors/clockdriven.rst).
     * See processors in `ezmsg.sigproc` for signal processing examples, or `ezmsg.learn` for machine learning examples.
 5. Override non-abstract methods if you need special behaviour.
 

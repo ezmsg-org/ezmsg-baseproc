@@ -15,6 +15,14 @@ from .clock import (
     ClockState,
 )
 
+# Clock-driven producers
+from .clockdriven import (
+    BaseClockDrivenProducer,
+    ClockDrivenSettings,
+    ClockDrivenSettingsType,
+    ClockDrivenState,
+)
+
 # Composite processor classes
 from .composite import (
     CompositeProcessor,
@@ -74,15 +82,18 @@ from .stateful import (
 from .units import (
     AdaptiveTransformerType,
     BaseAdaptiveTransformerUnit,
+    BaseClockDrivenProducerUnit,
     BaseConsumerUnit,
     BaseProcessorUnit,
     BaseProducerUnit,
     BaseTransformerUnit,
+    ClockDrivenProducerType,
     ConsumerType,
     GenAxisArray,
     ProducerType,
     TransformerType,
     get_base_adaptive_transformer_type,
+    get_base_clockdriven_producer_type,
     get_base_consumer_type,
     get_base_producer_type,
     get_base_transformer_type,
@@ -116,6 +127,7 @@ __all__ = [
     "ConsumerType",
     "TransformerType",
     "AdaptiveTransformerType",
+    "ClockDrivenProducerType",
     # Decorators
     "processor_state",
     # Base processor classes
@@ -131,6 +143,11 @@ __all__ = [
     "BaseStatefulTransformer",
     "BaseAdaptiveTransformer",
     "BaseAsyncTransformer",
+    # Clock-driven producers
+    "BaseClockDrivenProducer",
+    "ClockDrivenSettings",
+    "ClockDrivenSettingsType",
+    "ClockDrivenState",
     # Composite classes
     "CompositeStateful",
     "CompositeProcessor",
@@ -141,12 +158,14 @@ __all__ = [
     "BaseConsumerUnit",
     "BaseTransformerUnit",
     "BaseAdaptiveTransformerUnit",
+    "BaseClockDrivenProducerUnit",
     "GenAxisArray",
     # Type resolution helpers
     "get_base_producer_type",
     "get_base_consumer_type",
     "get_base_transformer_type",
     "get_base_adaptive_transformer_type",
+    "get_base_clockdriven_producer_type",
     "_get_base_processor_settings_type",
     "_get_base_processor_message_in_type",
     "_get_base_processor_message_out_type",

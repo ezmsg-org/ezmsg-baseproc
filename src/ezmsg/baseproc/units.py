@@ -7,8 +7,9 @@ from abc import ABC, abstractmethod
 
 import ezmsg.core as ez
 from ezmsg.util.generator import GenState
-from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray, LinearAxis
 
+from .clockdriven import BaseClockDrivenProducer
 from .composite import CompositeProcessor
 from .processor import BaseConsumer, BaseProducer, BaseTransformer
 from .protocols import MessageInType, MessageOutType, SettingsType
@@ -25,6 +26,7 @@ TransformerType = typing.TypeVar(
     bound=BaseTransformer | BaseStatefulTransformer | CompositeProcessor,
 )
 AdaptiveTransformerType = typing.TypeVar("AdaptiveTransformerType", bound=BaseAdaptiveTransformer)
+ClockDrivenProducerType = typing.TypeVar("ClockDrivenProducerType", bound=BaseClockDrivenProducer)
 
 
 def get_base_producer_type(cls: type) -> type:
@@ -41,6 +43,10 @@ def get_base_transformer_type(cls: type) -> type:
 
 def get_base_adaptive_transformer_type(cls: type) -> type:
     return resolve_typevar(cls, AdaptiveTransformerType)
+
+
+def get_base_clockdriven_producer_type(cls: type) -> type:
+    return resolve_typevar(cls, ClockDrivenProducerType)
 
 
 # --- Base classes for ezmsg Unit with specific processing capabilities ---
@@ -238,6 +244,47 @@ class BaseAdaptiveTransformerUnit(
     @ez.subscriber(INPUT_SAMPLE)
     async def on_sample(self, msg: SampleMessage) -> None:
         await self.processor.apartial_fit(msg)
+
+
+class BaseClockDrivenProducerUnit(
+    BaseProcessorUnit[SettingsType],
+    ABC,
+    typing.Generic[SettingsType, ClockDrivenProducerType],
+):
+    """
+    Base class for clock-driven producer units.
+
+    These units receive clock ticks (LinearAxis) and produce AxisArray output.
+    This simplifies the Clock → Counter → Generator pattern by combining
+    the counter functionality into the generator.
+
+    Implement a new Unit as follows::
+
+        class SinGeneratorUnit(BaseClockDrivenProducerUnit[
+            SinGeneratorSettings,     # SettingsType (must extend ClockDrivenSettings)
+            SinProducer,              # ClockDrivenProducerType
+        ]):
+            SETTINGS = SinGeneratorSettings
+
+    Where SinGeneratorSettings extends ClockDrivenSettings and SinProducer
+    extends BaseClockDrivenProducer.
+    """
+
+    INPUT_CLOCK = ez.InputStream(LinearAxis)
+    OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
+
+    def create_processor(self) -> None:
+        """Create the clock-driven producer instance from settings."""
+        producer_type = get_base_clockdriven_producer_type(self.__class__)
+        self.processor = producer_type(settings=self.SETTINGS)
+
+    @ez.subscriber(INPUT_CLOCK, zero_copy=True)
+    @ez.publisher(OUTPUT_SIGNAL)
+    @profile_subpub(trace_oldest=False)
+    async def on_clock(self, clock_tick: LinearAxis) -> typing.AsyncGenerator:
+        result = await self.processor.__acall__(clock_tick)
+        if result is not None:
+            yield self.OUTPUT_SIGNAL, result
 
 
 # Legacy class
