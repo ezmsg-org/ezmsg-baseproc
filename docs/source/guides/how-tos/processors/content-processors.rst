@@ -10,4 +10,5 @@ Processor HOW TOs
     adaptive
     composite
     unit
+    clockdriven
     checkpoint
