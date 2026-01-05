@@ -42,7 +42,7 @@ Here's a complete example of a sine wave generator:
 
     from ezmsg.baseproc import (
         BaseClockDrivenProducer,
-        BaseClockDrivenProducerUnit,
+        BaseClockDrivenUnit,
         ClockDrivenSettings,
         ClockDrivenState,
         processor_state,
@@ -124,7 +124,7 @@ Here's a complete example of a sine wave generator:
 
 
     class SinGeneratorUnit(
-        BaseClockDrivenProducerUnit[SinGeneratorSettings, SinGenerator]
+        BaseClockDrivenUnit[SinGeneratorSettings, SinGenerator]
     ):
         """
         ezmsg Unit wrapper for SinGenerator.

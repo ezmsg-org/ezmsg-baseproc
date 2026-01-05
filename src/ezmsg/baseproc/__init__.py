@@ -82,7 +82,7 @@ from .stateful import (
 from .units import (
     AdaptiveTransformerType,
     BaseAdaptiveTransformerUnit,
-    BaseClockDrivenProducerUnit,
+    BaseClockDrivenUnit,
     BaseConsumerUnit,
     BaseProcessorUnit,
     BaseProducerUnit,
@@ -158,7 +158,7 @@ __all__ = [
     "BaseConsumerUnit",
     "BaseTransformerUnit",
     "BaseAdaptiveTransformerUnit",
-    "BaseClockDrivenProducerUnit",
+    "BaseClockDrivenUnit",
     "GenAxisArray",
     # Type resolution helpers
     "get_base_producer_type",
