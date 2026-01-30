@@ -3,10 +3,10 @@
 import math
 import traceback
 import typing
+import warnings
 from abc import ABC, abstractmethod
 
 import ezmsg.core as ez
-from ezmsg.util.generator import GenState
 from ezmsg.util.messages.axisarray import AxisArray, LinearAxis
 
 from .clockdriven import BaseClockDrivenProducer
@@ -287,9 +287,41 @@ class BaseClockDrivenUnit(
             yield self.OUTPUT_SIGNAL, result
 
 
-# Legacy class
+class GenState(ez.State):
+    """
+    .. deprecated::
+        ``GenState`` is deprecated. Define a local state class or use
+        ``ezmsg.baseproc`` processor classes instead.
+    """
+
+    gen: typing.Generator[typing.Any, typing.Any, None]
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        warnings.warn(
+            "GenState is deprecated. Define a local state class instead of subclassing GenState.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
 class GenAxisArray(ez.Unit):
+    """
+    .. deprecated::
+        ``GenAxisArray`` is deprecated. Use ``BaseTransformerUnit`` or
+        ``BaseAdaptiveTransformerUnit`` from ``ezmsg.baseproc`` instead.
+    """
+
     STATE = GenState
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        warnings.warn(
+            "GenAxisArray is deprecated. Use BaseTransformerUnit or "
+            "BaseAdaptiveTransformerUnit from ezmsg.baseproc instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     INPUT_SIGNAL = ez.InputStream(AxisArray)
     OUTPUT_SIGNAL = ez.OutputStream(AxisArray)
