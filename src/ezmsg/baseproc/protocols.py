@@ -5,8 +5,7 @@ import typing
 from dataclasses import dataclass
 
 import ezmsg.core as ez
-
-from .util.message import SampleMessage
+from ezmsg.util.messages.axisarray import AxisArray
 
 # --- Processor state decorator ---
 processor_state = functools.partial(dataclass, unsafe_hash=True, frozen=False, init=False)
@@ -138,7 +137,7 @@ class StatefulTransformer(
 
 
 class AdaptiveTransformer(StatefulTransformer, typing.Protocol):
-    def partial_fit(self, message: SampleMessage) -> None:
+    def partial_fit(self, message: AxisArray) -> None:
         """Update transformer state using labeled training data.
 
         This method should update the internal state/parameters of the transformer
@@ -146,4 +145,4 @@ class AdaptiveTransformer(StatefulTransformer, typing.Protocol):
         """
         ...
 
-    async def apartial_fit(self, message: SampleMessage) -> None: ...
+    async def apartial_fit(self, message: AxisArray) -> None: ...
