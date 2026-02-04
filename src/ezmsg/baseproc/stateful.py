@@ -4,6 +4,9 @@ import pickle
 import typing
 from abc import ABC, abstractmethod
 
+from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.util import replace
+
 from .processor import (
     BaseProcessor,
     BaseProducer,
@@ -256,7 +259,7 @@ class BaseStatefulTransformer(
 class BaseAdaptiveTransformer(
     BaseStatefulTransformer[
         SettingsType,
-        MessageInType | SampleMessage,
+        MessageInType,
         MessageOutType | None,
         StateType,
     ],
@@ -264,30 +267,41 @@ class BaseAdaptiveTransformer(
     typing.Generic[SettingsType, MessageInType, MessageOutType, StateType],
 ):
     @abstractmethod
-    def partial_fit(self, message: SampleMessage) -> None: ...
+    def partial_fit(self, message: AxisArray) -> None: ...
 
-    async def apartial_fit(self, message: SampleMessage) -> None:
+    async def apartial_fit(self, message: AxisArray) -> None:
         """Override me if you need async partial fitting."""
         return self.partial_fit(message)
 
-    def __call__(self, message: MessageInType | SampleMessage) -> MessageOutType | None:
+    def __call__(self, message: MessageInType) -> MessageOutType | None:
         """
         Adapt transformer with training data (and optionally labels)
-        in SampleMessage
+        in AxisArray with attrs["trigger"].
 
         Args:
-            message: An instance of SampleMessage with optional
-             labels (y) in message.trigger.value.data and
-             data (X) in message.sample.data
+            message: An AxisArray with optional trigger in attrs["trigger"],
+             containing labels (y) in attrs["trigger"].value and
+             data (X) in message.data
 
         Returns: None
         """
         if is_sample_message(message):
+            if isinstance(message, SampleMessage):
+                # Auto-convert old format → new format
+                message = replace(
+                    message.sample,
+                    attrs={**message.sample.attrs, "trigger": message.trigger},
+                )
             return self.partial_fit(message)
         return super().__call__(message)
 
-    async def __acall__(self, message: MessageInType | SampleMessage) -> MessageOutType | None:
+    async def __acall__(self, message: MessageInType) -> MessageOutType | None:
         if is_sample_message(message):
+            if isinstance(message, SampleMessage):
+                message = replace(
+                    message.sample,
+                    attrs={**message.sample.attrs, "trigger": message.trigger},
+                )
             return await self.apartial_fit(message)
         return await super().__acall__(message)
 
