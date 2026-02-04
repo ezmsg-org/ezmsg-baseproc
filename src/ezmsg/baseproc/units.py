@@ -14,7 +14,6 @@ from .composite import CompositeProcessor
 from .processor import BaseConsumer, BaseProducer, BaseTransformer
 from .protocols import MessageInType, MessageOutType, SettingsType
 from .stateful import BaseAdaptiveTransformer, BaseStatefulConsumer, BaseStatefulTransformer
-from .util.message import SampleMessage
 from .util.profile import profile_subpub
 from .util.typeresolution import resolve_typevar
 
@@ -223,7 +222,7 @@ class BaseAdaptiveTransformerUnit(
     ABC,
     typing.Generic[SettingsType, MessageInType, MessageOutType, AdaptiveTransformerType],
 ):
-    INPUT_SAMPLE = ez.InputStream(SampleMessage)
+    INPUT_SAMPLE = ez.InputStream(AxisArray)
     INPUT_SIGNAL = ez.InputStream(MessageInType)
     OUTPUT_SIGNAL = ez.OutputStream(MessageOutType)
 
@@ -242,7 +241,7 @@ class BaseAdaptiveTransformerUnit(
             yield self.OUTPUT_SIGNAL, result
 
     @ez.subscriber(INPUT_SAMPLE)
-    async def on_sample(self, msg: SampleMessage) -> None:
+    async def on_sample(self, msg: AxisArray) -> None:
         await self.processor.apartial_fit(msg)
 
 

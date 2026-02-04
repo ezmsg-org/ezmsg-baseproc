@@ -4,9 +4,10 @@ import dataclasses
 import pickle
 from types import NoneType
 from typing import Any
-from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
+from ezmsg.util.messages.axisarray import AxisArray
 
 from ezmsg.baseproc import (
     BaseAdaptiveTransformer,
@@ -21,7 +22,7 @@ from ezmsg.baseproc import (
     BaseTransformer,
     CompositeProcessor,
     CompositeProducer,
-    SampleMessage,
+    SampleTriggerMessage,
     _get_base_processor_message_in_type,
     _get_base_processor_message_out_type,
     _get_base_processor_settings_type,
@@ -135,11 +136,11 @@ class MockAdaptiveTransformer(BaseAdaptiveTransformer[MockSettings, MockMessageA
     def _reset_state(self, message: MockMessageA) -> None:
         self._state.iterations = 0
 
-    def _process(self, message: MockMessageA | SampleMessage) -> MockMessageB:
+    def _process(self, message: MockMessageA) -> MockMessageB:
         self._state.iterations += 1
         return MockMessageB()
 
-    def partial_fit(self, message: SampleMessage) -> None:
+    def partial_fit(self, message: AxisArray) -> None:
         self._state.iterations += 1
 
 
@@ -756,10 +757,13 @@ class TestBaseStatefulTransformer:
         assert new_state[0].iterations == 1
 
 
-# Mock SampleMessage for testing BaseAdaptiveTransformer
+# Helper to create an AxisArray with trigger in attrs for testing BaseAdaptiveTransformer
 def mock_sample_message():
-    sample_message = MagicMock(spec=SampleMessage)
-    return sample_message
+    return AxisArray(
+        data=np.zeros((1, 1)),
+        dims=["time", "ch"],
+        attrs={"trigger": SampleTriggerMessage()},
+    )
 
 
 class TestBaseAdaptiveTransformer:
@@ -776,9 +780,7 @@ class TestBaseAdaptiveTransformer:
 
     def test_call_with_sample_message(self):
         transformer = MockAdaptiveTransformer()
-        # Create a sample message with a trigger attribute
         sample_msg = mock_sample_message()
-        setattr(sample_msg, "trigger", None)
         result = transformer(sample_msg)
         assert result is None  # partial_fit returns None
         assert transformer.state.iterations == 1
