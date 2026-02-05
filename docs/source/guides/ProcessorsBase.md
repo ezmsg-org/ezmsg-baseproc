@@ -29,7 +29,7 @@ The `ezmsg.baseproc` module contains the base classes for message processors. Th
 | 8   | `StatefulTransformer` | 5      | Yes   | Mi -> Mo                 | Y      | -           |
 | 9   | `AdaptiveTransformer` | 8      | Yes   | Mi -> Mo                 | Y      | Y           |
 
-Note: `__call__` and `partial_fit` both have asynchronous alternatives: `__acall__` and `apartial_fit` respectively.
+Note: `__call__` and `partial_fit` both have asynchronous alternatives: `__acall__` and `apartial_fit` respectively. Adaptive transformers also have `partial_fit_transform` / `apartial_fit_transform` for combined training and inference.
 
 
 ### Abstract implementations (Base Classes) for standalone processors
@@ -44,7 +44,7 @@ Note: `__call__` and `partial_fit` both have asynchronous alternatives: `__acall
 | 6   | `BaseStatefulProducer`    | 2      | 6        | `state` setter and getter; `stateful_op` wraps `__call__` which runs `__acall__`.          |
 | 7   | `BaseStatefulConsumer`    | 5      | 7        | Overrides return type to None                                                              |
 | 8   | `BaseStatefulTransformer` | 5      | 8        | Overrides input and return types                                                           |
-| 9   | `BaseAdaptiveTransformer` | 8      | 9        | Implements `partial_fit`. `__call__` may call `partial_fit` if message has `.trigger`.     |
+| 9   | `BaseAdaptiveTransformer` | 8      | 9        | Implements `partial_fit` and `partial_fit_transform`. Call `partial_fit` explicitly to train. |
 | 10  | `BaseAsyncTransformer`    | 8      | 8        | `__acall__` wraps abstract `_aprocess`; `__call__` runs `__acall__`.                       |
 | 11  | `CompositeProcessor`      | 1      | 5        | Methods iterate over sequence of processors created in `_initialize_processors`.           |
 | 12  | `CompositeProducer`       | 2      | 6        | Similar to `CompositeProcessor`, but first processor must be a producer.                   |
