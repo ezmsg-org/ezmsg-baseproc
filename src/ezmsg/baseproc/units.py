@@ -225,6 +225,7 @@ class BaseAdaptiveTransformerUnit(
     INPUT_SAMPLE = ez.InputStream(AxisArray)
     INPUT_SIGNAL = ez.InputStream(MessageInType)
     OUTPUT_SIGNAL = ez.OutputStream(MessageOutType)
+    OUTPUT_SAMPLE = ez.OutputStream(MessageOutType)
 
     def create_processor(self) -> None:
         # self.processor: AdaptiveTransformerType[SettingsType, MessageInType, MessageOutType, StateType]
@@ -241,8 +242,12 @@ class BaseAdaptiveTransformerUnit(
             yield self.OUTPUT_SIGNAL, result
 
     @ez.subscriber(INPUT_SAMPLE)
-    async def on_sample(self, msg: AxisArray) -> None:
-        await self.processor.apartial_fit(msg)
+    @ez.publisher(OUTPUT_SAMPLE)
+    @profile_subpub(trace_oldest=False)
+    async def on_sample(self, msg: AxisArray) -> typing.AsyncGenerator:
+        result = await self.processor.apartial_fit_transform(msg)
+        if result is not None:
+            yield self.OUTPUT_SAMPLE, result
 
 
 class BaseClockDrivenUnit(
