@@ -2,10 +2,10 @@
 
 import pickle
 import typing
+import warnings
 from abc import ABC, abstractmethod
 
 from ezmsg.util.messages.axisarray import AxisArray
-from ezmsg.util.messages.util import replace
 
 from .processor import (
     BaseProcessor,
@@ -14,7 +14,7 @@ from .processor import (
 )
 from .protocols import MessageInType, MessageOutType, SettingsType, StateType
 from .util.asio import run_coroutine_sync
-from .util.message import SampleMessage, is_sample_message
+from .util.message import is_sample_message
 from .util.typeresolution import resolve_typevar
 
 
@@ -274,36 +274,46 @@ class BaseAdaptiveTransformer(
         return self.partial_fit(message)
 
     def __call__(self, message: MessageInType) -> MessageOutType | None:
-        """
-        Adapt transformer with training data (and optionally labels)
-        in AxisArray with attrs["trigger"].
-
-        Args:
-            message: An AxisArray with optional trigger in attrs["trigger"],
-             containing labels (y) in attrs["trigger"].value and
-             data (X) in message.data
-
-        Returns: None
-        """
         if is_sample_message(message):
-            if isinstance(message, SampleMessage):
-                # Auto-convert old format → new format
-                message = replace(
-                    message.sample,
-                    attrs={**message.sample.attrs, "trigger": message.trigger},
-                )
-            return self.partial_fit(message)
+            warnings.warn(
+                f"{self.__class__.__name__}.__call__() received a sample message "
+                "(AxisArray with 'trigger' in attrs). Auto-routing to partial_fit "
+                "has been removed. Use partial_fit() for training only, or "
+                "partial_fit_transform() for training + inference.",
+                UserWarning,
+                stacklevel=2,
+            )
         return super().__call__(message)
 
     async def __acall__(self, message: MessageInType) -> MessageOutType | None:
         if is_sample_message(message):
-            if isinstance(message, SampleMessage):
-                message = replace(
-                    message.sample,
-                    attrs={**message.sample.attrs, "trigger": message.trigger},
-                )
-            return await self.apartial_fit(message)
+            warnings.warn(
+                f"{self.__class__.__name__}.__acall__() received a sample message "
+                "(AxisArray with 'trigger' in attrs). Auto-routing to partial_fit "
+                "has been removed. Use apartial_fit() for training only, or "
+                "apartial_fit_transform() for training + inference.",
+                UserWarning,
+                stacklevel=2,
+            )
         return await super().__acall__(message)
+
+    def partial_fit_transform(self, message: AxisArray) -> MessageOutType:
+        """Train on the message, then run inference and return the result."""
+        msg_hash = self._hash_message(message)
+        if msg_hash != self._hash:
+            self._reset_state(message)
+            self._hash = msg_hash
+        self.partial_fit(message)
+        return self._process(message)
+
+    async def apartial_fit_transform(self, message: AxisArray) -> MessageOutType:
+        """Async variant of partial_fit_transform."""
+        msg_hash = self._hash_message(message)
+        if msg_hash != self._hash:
+            self._reset_state(message)
+            self._hash = msg_hash
+        await self.apartial_fit(message)
+        return await self._aprocess(message)
 
 
 class BaseAsyncTransformer(
