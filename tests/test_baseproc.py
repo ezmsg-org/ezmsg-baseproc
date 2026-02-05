@@ -43,6 +43,7 @@ class MockSettings:
 @processor_state
 class MockState:
     iterations: int = 0
+    fit_count: int = 0
     hash: int = -1
 
 
@@ -141,7 +142,7 @@ class MockAdaptiveTransformer(BaseAdaptiveTransformer[MockSettings, MockMessageA
         return MockMessageB()
 
     def partial_fit(self, message: AxisArray) -> None:
-        self._state.iterations += 1
+        self._state.fit_count += 1
 
 
 class MockAsyncTransformer(BaseAsyncTransformer[MockSettings, MockMessageA, MockMessageB, MockState]):
@@ -770,20 +771,29 @@ class TestBaseAdaptiveTransformer:
     def test_partial_fit(self):
         transformer = MockAdaptiveTransformer()
         transformer.partial_fit(mock_sample_message())
-        assert transformer.state.iterations == 1
+        assert transformer.state.fit_count == 1
 
     @pytest.mark.asyncio
     async def test_apartial_fit(self):
         transformer = MockAdaptiveTransformer()
         await transformer.apartial_fit(mock_sample_message())
-        assert transformer.state.iterations == 1
+        assert transformer.state.fit_count == 1
 
-    def test_call_with_sample_message(self):
+    def test_call_with_sample_message_warns(self):
         transformer = MockAdaptiveTransformer()
         sample_msg = mock_sample_message()
-        result = transformer(sample_msg)
-        assert result is None  # partial_fit returns None
-        assert transformer.state.iterations == 1
+        with pytest.warns(UserWarning, match="Auto-routing to partial_fit"):
+            result = transformer(sample_msg)
+        assert isinstance(result, MockMessageB)  # inference, not partial_fit
+        assert transformer.state.fit_count == 0  # partial_fit NOT called
+
+    def test_partial_fit_transform(self):
+        transformer = MockAdaptiveTransformer()
+        sample_msg = mock_sample_message()
+        result = transformer.partial_fit_transform(sample_msg)
+        assert isinstance(result, MockMessageB)
+        assert transformer.state.fit_count == 1
+        assert transformer.state.iterations == 1  # _process was called
 
 
 class TestBaseAsyncTransformer:
