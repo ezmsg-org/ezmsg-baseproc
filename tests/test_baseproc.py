@@ -268,6 +268,42 @@ class MockGeneratorCompositeProcessor(CompositeProcessor[MockSettings, MockMessa
         }
 
 
+# Mock classes for _post_process testing
+
+
+class AxisArrayScaleTransformer(BaseTransformer[MockSettings, AxisArray, AxisArray]):
+    """Multiplies AxisArray.data by settings.param1."""
+
+    def _process(self, message: AxisArray) -> AxisArray:
+        return dataclasses.replace(message, data=message.data * self.settings.param1)
+
+
+class AxisArrayOffsetTransformer(BaseTransformer[MockSettings, AxisArray, AxisArray]):
+    """Adds settings.param1 to AxisArray.data."""
+
+    def _process(self, message: AxisArray) -> AxisArray:
+        return dataclasses.replace(message, data=message.data + self.settings.param1)
+
+
+class PostProcessTrackingComposite(CompositeProcessor[MockSettings, MockMessageA, MockMessageB]):
+    """CompositeProcessor that tracks _post_process calls."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.post_process_calls = 0
+
+    @staticmethod
+    def _initialize_processors(settings: MockSettings) -> dict[str, Any]:
+        return {
+            "processor": MockProcessor(settings=settings),
+            "stateful_processor": MockStatefulProcessor(settings=settings),
+        }
+
+    def _post_process(self, result):
+        self.post_process_calls += 1
+        return result
+
+
 # Mock CompositeProducer examples
 class ValidSingleCompositeProducer(CompositeProducer[MockSettings, MockMessageA]):
     @staticmethod
@@ -998,6 +1034,75 @@ class TestCompositeProcessor:
         # Hash not set to 3 as expected as processor is called after setting the hash
         # Hash set to 0 via the _reset_state method.
         assert processor._procs["stateful_processor"]._hash == 0
+
+
+# -- Tests for _post_process hook --
+
+
+class TestPostProcess:
+    def test_post_process_called_on_process(self):
+        proc = PostProcessTrackingComposite()
+        assert proc.post_process_calls == 0
+        proc._process(MockMessageA())
+        assert proc.post_process_calls == 1
+        proc._process(MockMessageA())
+        assert proc.post_process_calls == 2
+
+    @pytest.mark.asyncio
+    async def test_post_process_called_on_aprocess(self):
+        proc = PostProcessTrackingComposite()
+        await proc._aprocess(MockMessageA())
+        assert proc.post_process_calls == 1
+
+    def test_post_process_called_on_stateful_op(self):
+        proc = PostProcessTrackingComposite()
+        proc.stateful_op(None, MockMessageA())
+        assert proc.post_process_calls == 1
+
+    def test_post_process_default_is_identity(self):
+        """The default _post_process is a no-op."""
+        proc = ValidSingleCompositeProcessor()
+        result = proc(MockMessageA())
+        assert isinstance(result, MockMessageB)
+
+    def test_post_process_with_mlx(self):
+        """Test _post_process with MLX eval on Apple Silicon."""
+        mx = pytest.importorskip("mlx.core")
+
+        class MLXEvalComposite(CompositeProcessor[MockSettings, AxisArray, AxisArray]):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.used_mlx_eval = False
+
+            @staticmethod
+            def _initialize_processors(settings):
+                return {
+                    "scale": AxisArrayScaleTransformer(settings=settings),
+                    "offset": AxisArrayOffsetTransformer(settings=settings),
+                }
+
+            def _post_process(self, result):
+                if result is not None:
+                    import mlx.core as mx
+
+                    if isinstance(result.data, mx.array):
+                        mx.eval(result.data)
+                        self.used_mlx_eval = True
+                return result
+
+        input_data = mx.array([1.0, 2.0, 3.0])
+        msg = AxisArray(data=input_data, dims=["time"])
+
+        # param1=3: scale(×3) then offset(+3) → [1,2,3] → [3,6,9] → [6,9,12]
+        proc = MLXEvalComposite(settings=MockSettings(param1=3))
+        result = proc(msg)
+
+        # Verify MLX path was taken
+        assert proc.used_mlx_eval, "Expected _post_process to detect and eval MLX array"
+        # Verify result is still an MLX array (not converted to numpy)
+        assert isinstance(result.data, mx.array)
+        # Verify both processors ran: (data * 3) + 3
+        np.testing.assert_array_equal(np.array(result.data), [6.0, 9.0, 12.0])
 
 
 # -- Tests for CompositeProducer --

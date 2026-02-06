@@ -129,6 +129,10 @@ class CompositeStateful(Stateful[dict[str, typing.Any]], ABC, typing.Generic[Set
         # By default, we don't expect to change the state of a composite processor/producer
         pass
 
+    def _post_process(self, result: MessageOutType | None) -> MessageOutType | None:
+        """Hook called after the processor chain completes. Override to add post-processing."""
+        return result
+
     @abstractmethod
     def stateful_op(
         self,
@@ -199,7 +203,7 @@ class CompositeProcessor(
         result = message
         for proc in self._procs.values():
             result = proc.send(result)
-        return result
+        return self._post_process(result)
 
     async def _aprocess(self, message: MessageInType | None = None) -> MessageOutType | None:
         """
@@ -211,7 +215,7 @@ class CompositeProcessor(
         result = message
         for proc in self._procs.values():
             result = await proc.asend(result)
-        return result
+        return self._post_process(result)
 
     def stateful_op(
         self,
@@ -238,7 +242,7 @@ class CompositeProcessor(
                 state[k], result = proc.stateful_op(state.get(k, None), result)
             else:
                 result = proc.send(result)
-        return state, result
+        return state, self._post_process(result)
 
 
 class CompositeProducer(
@@ -289,7 +293,7 @@ class CompositeProducer(
         result = await procs[0].__anext__()
         for proc in procs[1:]:
             result = await proc.asend(result)
-        return result
+        return self._post_process(result)
 
     def stateful_op(
         self,
@@ -320,4 +324,4 @@ class CompositeProducer(
                 state[k], result = proc.stateful_op(state.get(k, None), result)
             else:
                 result = proc.send(result)
-        return state, result
+        return state, self._post_process(result)
