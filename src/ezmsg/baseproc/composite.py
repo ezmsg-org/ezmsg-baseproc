@@ -17,12 +17,31 @@ def _get_processor_message_type(
     proc: BaseProcessor | BaseProducer | GeneratorType | SyncToAsyncGeneratorWrapper,
     dir: str,
 ) -> type | None:
-    """Extract the input type from a processor."""
+    """Extract the input or output message type from a processor.
+
+    For objects without ``get_message_type``, falls back to inspecting
+    ``__call__`` type hints (return annotation for "out", first parameter
+    annotation for "in"). Returns ``typing.Any`` if no type info is available.
+    """
     if isinstance(proc, GeneratorType) or isinstance(proc, SyncToAsyncGeneratorWrapper):
         gen_func = proc.gi_frame.f_globals[proc.gi_frame.f_code.co_name]
         args = typing.get_args(gen_func.__annotations__.get("return"))
         return args[0] if dir == "out" else args[1]  # yield type / send type
-    return proc.__class__.get_message_type(dir)
+    if hasattr(proc.__class__, "get_message_type"):
+        return proc.__class__.get_message_type(dir)
+    # Fall back to __call__ type hints
+    if callable(proc):
+        try:
+            hints = typing.get_type_hints(proc.__call__)
+        except Exception:
+            return typing.Any
+        if dir == "out":
+            return hints.get("return", typing.Any)
+        # "in": first parameter after 'self'
+        params = [k for k in hints if k != "return"]
+        if params:
+            return hints[params[0]]
+    return typing.Any
 
 
 def _has_stateful_op(proc: typing.Any) -> typing.TypeGuard[Stateful]:
@@ -129,6 +148,10 @@ class CompositeStateful(Stateful[dict[str, typing.Any]], ABC, typing.Generic[Set
         # By default, we don't expect to change the state of a composite processor/producer
         pass
 
+    def _post_process(self, result: MessageOutType | None) -> MessageOutType | None:
+        """Hook called after the processor chain completes. Override to add post-processing."""
+        return result
+
     @abstractmethod
     def stateful_op(
         self,
@@ -189,7 +212,6 @@ class CompositeProcessor(
         Process a message through the pipeline of processors. If the message is None, or no message is provided,
         then it will be assumed that the first processor is a producer and will be called without arguments.
         This will be invoked via `__call__` or `send`.
-        We use `__next__` and `send` to allow using legacy generators that have yet to be converted to transformers.
 
         Warning: All processors will be called using their synchronous API, which may invoke a slow sync->async wrapper
         for processors that are async-first (i.e., children of BaseProducer or BaseAsyncTransformer).
@@ -198,8 +220,8 @@ class CompositeProcessor(
         """
         result = message
         for proc in self._procs.values():
-            result = proc.send(result)
-        return result
+            result = proc(result) if callable(proc) else proc.send(result)
+        return self._post_process(result)
 
     async def _aprocess(self, message: MessageInType | None = None) -> MessageOutType | None:
         """
@@ -211,7 +233,7 @@ class CompositeProcessor(
         result = message
         for proc in self._procs.values():
             result = await proc.asend(result)
-        return result
+        return self._post_process(result)
 
     def stateful_op(
         self,
@@ -237,8 +259,8 @@ class CompositeProcessor(
             if _has_stateful_op(proc):
                 state[k], result = proc.stateful_op(state.get(k, None), result)
             else:
-                result = proc.send(result)
-        return state, result
+                result = proc(result) if callable(proc) else proc.send(result)
+        return state, self._post_process(result)
 
 
 class CompositeProducer(
@@ -289,7 +311,7 @@ class CompositeProducer(
         result = await procs[0].__anext__()
         for proc in procs[1:]:
             result = await proc.asend(result)
-        return result
+        return self._post_process(result)
 
     def stateful_op(
         self,
@@ -319,5 +341,5 @@ class CompositeProducer(
             if _has_stateful_op(proc):
                 state[k], result = proc.stateful_op(state.get(k, None), result)
             else:
-                result = proc.send(result)
-        return state, result
+                result = proc(result) if callable(proc) else proc.send(result)
+        return state, self._post_process(result)
