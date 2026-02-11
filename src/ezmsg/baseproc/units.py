@@ -179,24 +179,27 @@ class BaseTransformerUnit(
 ):
     """
     Base class for transformer units -- i.e. units that transform input messages into output messages.
-    Implement a new Unit as follows:
 
-    class CustomUnit(BaseTransformerUnit[
-        CustomTransformerSettings,    # SettingsType
-        AxisArray,                    # MessageInType
-        AxisArray,                    # MessageOutType
-        CustomTransformer,            # TransformerType
-    ]):
-        SETTINGS = CustomTransformerSettings
+    Implement a new Unit as follows::
+
+        class CustomUnit(BaseTransformerUnit[
+            CustomTransformerSettings,    # SettingsType
+            AxisArray,                    # MessageInType
+            AxisArray,                    # MessageOutType
+            CustomTransformer,            # TransformerType
+        ]):
+            SETTINGS = CustomTransformerSettings
 
     ... that's all!
 
-    Where CustomTransformerSettings and CustomTransformer are custom implementations of:
-    - ez.Settings for settings
+    Where ``CustomTransformerSettings`` and ``CustomTransformer`` are custom implementations of:
+
+    - ``ez.Settings`` for settings
     - One of these transformer types:
-      * BaseTransformer
-      * BaseStatefulTransformer
-      * CompositeProcessor
+
+      - ``BaseTransformer``
+      - ``BaseStatefulTransformer``
+      - ``CompositeProcessor``
     """
 
     INPUT_SIGNAL = ez.InputStream(MessageInType)

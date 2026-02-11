@@ -171,21 +171,23 @@ class CompositeProcessor(
     typing.Generic[SettingsType, MessageInType, MessageOutType],
 ):
     """
-    A processor that chains multiple processor together in a feedforward non-branching graph.
+    A processor that chains multiple processors together in a feedforward non-branching graph.
     The individual processors may be stateless or stateful. The last processor may be a consumer,
-    otherwise processors must be transformers. Use CompositeProducer if you want the first
-    processor to be a producer. Concrete subclasses must implement `_initialize_processors`.
-    Optionally override `_reset_state` if you want adaptive state behaviour.
-    Example implementation:
+    otherwise processors must be transformers. Use ``CompositeProducer`` if you want the first
+    processor to be a producer. Concrete subclasses must implement ``_initialize_processors``.
+    Optionally override ``_reset_state`` if you want adaptive state behaviour.
 
-    class CustomCompositeProcessor(CompositeProcessor[CustomSettings, AxisArray, AxisArray]):
-        @staticmethod
-        def _initialize_processors(settings: CustomSettings) -> dict[str, BaseProcessor]:
-            return {
-                "stateful_transformer": CustomStatefulProducer(**settings),
-                "transformer": CustomTransformer(**settings),
-            }
-    Where **settings should be replaced with initialisation arguments for each processor.
+    Example implementation::
+
+        class CustomCompositeProcessor(CompositeProcessor[CustomSettings, AxisArray, AxisArray]):
+            @staticmethod
+            def _initialize_processors(settings: CustomSettings) -> dict[str, BaseProcessor]:
+                return {
+                    "stateful_transformer": CustomStatefulProducer(**settings),
+                    "transformer": CustomTransformer(**settings),
+                }
+
+    Where ``**settings`` should be replaced with initialisation arguments for each processor.
     """
 
     def __init__(self, *args, **kwargs) -> None:

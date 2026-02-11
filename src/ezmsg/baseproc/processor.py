@@ -45,11 +45,12 @@ class BaseProcessor(ABC, typing.Generic[SettingsType, MessageInType, MessageOutT
     """
     Base class for processors. You probably do not want to inherit from this class directly.
     Refer instead to the more specific base classes.
-      * Use :obj:`BaseConsumer` or :obj:`BaseTransformer` for ops that return a result or not, respectively.
-      * Use :obj:`BaseStatefulProcessor` and its children for operations that require state.
 
-    Note that `BaseProcessor` and its children are sync by default. If you need async by defualt, then
-    override the async methods and call them from the sync methods. Look to `BaseProducer` for examples of
+    * Use :obj:`BaseConsumer` or :obj:`BaseTransformer` for ops that return a result or not, respectively.
+    * Use :obj:`BaseStatefulProcessor` and its children for operations that require state.
+
+    Note that ``BaseProcessor`` and its children are sync by default. If you need async by default, then
+    override the async methods and call them from the sync methods. Look to ``BaseProducer`` for examples of
     calling async methods from sync methods.
     """
 
