@@ -50,17 +50,23 @@ TypeLike = typing.Union[type[typing.Any], typing.Any, type(None), None]
 def check_message_type_compatibility(type1: TypeLike, type2: TypeLike) -> bool:
     """
     Check if two types are compatible for message passing.
+
     Returns True if:
+
     - Both are None/NoneType
     - Either is typing.Any
-    - type1 is a subclass of type2, which includes
-        - type1 and type2 are concrete types and type1 is a subclass of type2
-        - type1 is None/NoneType and type2 is typing.Optional, or
-        - type1 is subtype of the non-None inner type of type2 if type2 is Optional
+    - type1 is a subclass of type2, which includes:
+
+      - type1 and type2 are concrete types and type1 is a subclass of type2
+      - type1 is None/NoneType and type2 is typing.Optional, or
+      - type1 is subtype of the non-None inner type of type2 if type2 is Optional
+
     - type1 is a Union/Optional type and all inner types are compatible with type2
+
     Args:
         type1: First type to compare
         type2: Second type to compare
+
     Returns:
         bool: True if the types are compatible, False otherwise
     """
