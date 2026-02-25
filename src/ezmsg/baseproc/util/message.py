@@ -8,8 +8,8 @@ from ezmsg.util.messages.axisarray import AxisArray
 
 @dataclass(unsafe_hash=True)
 class SampleTriggerMessage:
-    timestamp: float = field(default_factory=time.time)
-    """Time of the trigger, in seconds. The Clock depends on the input but defaults to time.time"""
+    timestamp: float = field(default_factory=time.monotonic)
+    """Time of the trigger, in seconds. The Clock depends on the input but defaults to time.monotonic"""
 
     period: tuple[float, float] | None = None
     """The period around the timestamp, in seconds"""
