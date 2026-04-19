@@ -48,6 +48,23 @@ def get_base_clockdriven_producer_type(cls: type) -> type:
     return resolve_typevar(cls, ClockDrivenProducerType)
 
 
+def _close_previous(prev: typing.Any) -> None:
+    """Close the previous producer/processor instance before it's replaced.
+
+    Safe against missing ``close`` attribute and exceptions raised by it,
+    so a misbehaving subclass can never block a settings-driven recreate.
+    """
+    if prev is None:
+        return
+    close = getattr(prev, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        ez.logger.exception("close() raised on previous instance; ignoring")
+
+
 # --- Base classes for ezmsg Unit with specific processing capabilities ---
 class BaseProducerUnit(ez.Unit, ABC, typing.Generic[SettingsType, MessageOutType, ProducerType]):
     """
@@ -75,7 +92,13 @@ class BaseProducerUnit(ez.Unit, ABC, typing.Generic[SettingsType, MessageOutType
 
     def create_producer(self) -> None:
         # self.producer: ProducerType
-        """Create the producer instance from settings."""
+        """Create the producer instance from settings.
+
+        Closes the previous producer first (if any), so resources held by it
+        — sockets, file handles, hardware sessions — are released deterministically
+        rather than being left to garbage collection.
+        """
+        _close_previous(getattr(self, "producer", None))
         producer_type = get_base_producer_type(self.__class__)
         self.producer = producer_type(settings=self.SETTINGS)
 
@@ -159,6 +182,7 @@ class BaseConsumerUnit(
     def create_processor(self):
         # self.processor: ConsumerType[SettingsType, MessageInType, StateType]
         """Create the consumer instance from settings."""
+        _close_previous(getattr(self, "processor", None))
         consumer_type = get_base_consumer_type(self.__class__)
         self.processor = consumer_type(settings=self.SETTINGS)
 
@@ -208,6 +232,7 @@ class BaseTransformerUnit(
     def create_processor(self):
         # self.processor: TransformerType[SettingsType, MessageInType, MessageOutType, StateType]
         """Create the transformer instance from settings."""
+        _close_previous(getattr(self, "processor", None))
         transformer_type = get_base_transformer_type(self.__class__)
         self.processor = transformer_type(settings=self.SETTINGS)
 
@@ -233,6 +258,7 @@ class BaseAdaptiveTransformerUnit(
     def create_processor(self) -> None:
         # self.processor: AdaptiveTransformerType[SettingsType, MessageInType, MessageOutType, StateType]
         """Create the adaptive transformer instance from settings."""
+        _close_previous(getattr(self, "processor", None))
         adaptive_transformer_type = get_base_adaptive_transformer_type(self.__class__)
         self.processor = adaptive_transformer_type(settings=self.SETTINGS)
 
@@ -282,6 +308,7 @@ class BaseClockDrivenUnit(
 
     def create_processor(self) -> None:
         """Create the clock-driven producer instance from settings."""
+        _close_previous(getattr(self, "processor", None))
         producer_type = get_base_clockdriven_producer_type(self.__class__)
         self.processor = producer_type(settings=self.SETTINGS)
 
