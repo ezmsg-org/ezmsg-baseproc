@@ -101,6 +101,15 @@ class BaseProcessor(ABC, typing.Generic[SettingsType, MessageInType, MessageOutT
         """Alias for __acall__."""
         return await self.__acall__(message)
 
+    def close(self) -> None:
+        """Release any resources held by this processor.
+
+        No-op by default; override in subclasses that hold sockets, file
+        handles, hardware sessions, or other external resources. The Unit
+        base classes call this on the previous instance whenever a settings
+        change triggers a recreate.
+        """
+
 
 class BaseProducer(ABC, typing.Generic[SettingsType, MessageOutType]):
     """
@@ -149,6 +158,15 @@ class BaseProducer(ABC, typing.Generic[SettingsType, MessageOutType]):
     def __next__(self) -> MessageOutType:
         # So this can be used as a generator.
         return self()
+
+    def close(self) -> None:
+        """Release any resources held by this producer.
+
+        No-op by default; override in subclasses that hold sockets, file
+        handles, hardware sessions, or other external resources. The Unit
+        base classes call this on the previous instance whenever a settings
+        change triggers a recreate.
+        """
 
 
 class BaseConsumer(
