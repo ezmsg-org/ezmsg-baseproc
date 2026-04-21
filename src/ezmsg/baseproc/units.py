@@ -186,7 +186,7 @@ class BaseConsumerUnit(
         consumer_type = get_base_consumer_type(self.__class__)
         self.processor = consumer_type(settings=self.SETTINGS)
 
-    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.subscriber(INPUT_SIGNAL)
     async def on_signal(self, message: MessageInType):
         """
         Consume the message.
@@ -236,7 +236,7 @@ class BaseTransformerUnit(
         transformer_type = get_base_transformer_type(self.__class__)
         self.processor = transformer_type(settings=self.SETTINGS)
 
-    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     @profile_subpub(trace_oldest=False)
     async def on_signal(self, message: MessageInType) -> typing.AsyncGenerator:
@@ -262,7 +262,7 @@ class BaseAdaptiveTransformerUnit(
         adaptive_transformer_type = get_base_adaptive_transformer_type(self.__class__)
         self.processor = adaptive_transformer_type(settings=self.SETTINGS)
 
-    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     @profile_subpub(trace_oldest=False)
     async def on_signal(self, message: MessageInType) -> typing.AsyncGenerator:
@@ -312,7 +312,7 @@ class BaseClockDrivenUnit(
         producer_type = get_base_clockdriven_producer_type(self.__class__)
         self.processor = producer_type(settings=self.SETTINGS)
 
-    @ez.subscriber(INPUT_CLOCK, zero_copy=True)
+    @ez.subscriber(INPUT_CLOCK)
     @ez.publisher(OUTPUT_SIGNAL)
     @profile_subpub(trace_oldest=False)
     async def on_clock(self, clock_tick: LinearAxis) -> typing.AsyncGenerator:
@@ -381,7 +381,7 @@ class GenAxisArray(ez.Unit):
         self.apply_settings(msg)
         self.construct_generator()
 
-    @ez.subscriber(INPUT_SIGNAL, zero_copy=True)
+    @ez.subscriber(INPUT_SIGNAL)
     @ez.publisher(OUTPUT_SIGNAL)
     @profile_subpub(trace_oldest=False)
     async def on_signal(self, message: AxisArray) -> typing.AsyncGenerator:
