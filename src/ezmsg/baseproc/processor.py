@@ -1,11 +1,17 @@
 """Base processor classes for ezmsg (non-stateful)."""
 
+import dataclasses
 import typing
 from abc import ABC, abstractmethod
 
 from .protocols import MessageInType, MessageOutType, SettingsType
 from .util.asio import run_coroutine_sync
 from .util.typeresolution import resolve_typevar
+
+
+def _changed_settings_fields(old: typing.Any, new: typing.Any) -> set[str]:
+    """Return field names whose values differ between two settings instances."""
+    return {f.name for f in dataclasses.fields(new) if getattr(old, f.name) != getattr(new, f.name)}
 
 
 def _get_base_processor_settings_type(cls: type) -> type:
