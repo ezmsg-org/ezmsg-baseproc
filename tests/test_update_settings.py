@@ -9,6 +9,7 @@ from ezmsg.baseproc import (
     BaseProducer,
     BaseStatefulProcessor,
     BaseStatefulProducer,
+    CompositeProcessor,
     processor_state,
 )
 
@@ -229,3 +230,119 @@ class TestOverrideUpdateSettings:
         proc.update_settings(UpdSettings(window_size=50))
         proc(MsgA())
         assert proc.state.resets == 2
+
+
+@dataclasses.dataclass
+class CompSettings:
+    stage1_window: int = 10
+    stage2_threshold: float = 0.5
+    include_extra: bool = False
+
+
+@processor_state
+class CountingState:
+    resets: int = 0
+    closes: int = 0
+    hash: int = -1
+
+
+class CountingChild(BaseStatefulProcessor[UpdSettings, MsgA, MsgA, CountingState]):
+    """Identity-passing stateful child; `threshold` is NONRESET-safe."""
+
+    NONRESET_SETTINGS_FIELDS = frozenset({"threshold"})
+
+    def _reset_state(self, message: MsgA) -> None:
+        self._state.resets += 1
+
+    def _process(self, message: MsgA) -> MsgA:
+        return message
+
+    def close(self) -> None:
+        self._state.closes += 1
+
+
+class _PipelineComposite(CompositeProcessor[CompSettings, MsgA, MsgA]):
+    """Two- or three-stage composite driven by CompSettings."""
+
+    @staticmethod
+    def _initialize_processors(settings: CompSettings) -> dict[str, object]:
+        procs: dict[str, object] = {
+            "stage1": CountingChild(settings=UpdSettings(window_size=settings.stage1_window)),
+            "stage2": CountingChild(settings=UpdSettings(threshold=settings.stage2_threshold)),
+        }
+        if settings.include_extra:
+            procs["extra"] = CountingChild(settings=UpdSettings())
+        return procs
+
+
+class TestCompositeUpdateSettings:
+    """Default CompositeProcessor.update_settings reconciliation rules."""
+
+    def test_matching_children_preserve_state_via_delegated_update(self):
+        comp = _PipelineComposite(settings=CompSettings())
+        comp(MsgA())
+        stage1_before = comp._procs["stage1"]
+        stage2_before = comp._procs["stage2"]
+        assert stage1_before.state.resets == 1
+        assert stage2_before.state.resets == 1
+
+        # stage2_threshold is NONRESET-safe on the child; stage1_window is not.
+        comp.update_settings(CompSettings(stage1_window=20, stage2_threshold=0.9))
+
+        # Same instances survived (type-match + update_settings path).
+        assert comp._procs["stage1"] is stage1_before
+        assert comp._procs["stage2"] is stage2_before
+
+        # stage1 sees a non-safe field change → reset queued on child.
+        assert stage1_before._hash == -1
+        # stage2 only saw a safe field change → no reset queued.
+        assert stage2_before._hash != -1
+
+        comp(MsgA())
+        assert stage1_before.state.resets == 2
+        assert stage2_before.state.resets == 1
+
+    def test_new_key_added_when_flag_flips_on(self):
+        comp = _PipelineComposite(settings=CompSettings(include_extra=False))
+        comp(MsgA())
+        assert "extra" not in comp._procs
+
+        comp.update_settings(CompSettings(include_extra=True))
+        assert "extra" in comp._procs
+        # Pipeline still processes; extra runs its first reset.
+        comp(MsgA())
+        assert comp._procs["extra"].state.resets == 1
+
+    def test_disappeared_key_is_closed(self):
+        comp = _PipelineComposite(settings=CompSettings(include_extra=True))
+        comp(MsgA())
+        extra = comp._procs["extra"]
+
+        comp.update_settings(CompSettings(include_extra=False))
+        assert "extra" not in comp._procs
+        assert extra.state.closes == 1
+
+    def test_no_op_update_skips_rebuild(self):
+        comp = _PipelineComposite(settings=CompSettings())
+        comp(MsgA())
+        stage1_before = comp._procs["stage1"]
+
+        # Identical settings → no children touched.
+        comp.update_settings(CompSettings())
+        assert comp._procs["stage1"] is stage1_before
+        # Confirm no spurious reset was requested on the child.
+        assert stage1_before._hash != -1
+
+    def test_composite_nonreset_fields_skip_rebuild(self):
+        class AlmostNoopComposite(_PipelineComposite):
+            NONRESET_SETTINGS_FIELDS = frozenset({"stage1_window"})
+
+        comp = AlmostNoopComposite(settings=CompSettings())
+        comp(MsgA())
+        stage1_before = comp._procs["stage1"]
+
+        # Change a NONRESET-safe field on the composite: no rebuild, no child touch.
+        comp.update_settings(CompSettings(stage1_window=999))
+        assert comp._procs["stage1"] is stage1_before
+        assert stage1_before.settings.window_size == 10  # child untouched
+        assert comp.settings.stage1_window == 999  # composite did rebind
