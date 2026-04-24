@@ -62,6 +62,11 @@ class BaseProcessor(ABC, typing.Generic[SettingsType, MessageInType, MessageOutT
 
     settings: SettingsType
 
+    # Settings fields that can change without requiring a state reset.
+    # Empty (default) means any field change will request a reset. Subclasses
+    # override with the names of fields that the processor can absorb live.
+    NONRESET_SETTINGS_FIELDS: typing.ClassVar[frozenset[str]] = frozenset()
+
     @classmethod
     def get_settings_type(cls) -> type[SettingsType]:
         return _get_base_processor_settings_type(cls)
@@ -77,6 +82,28 @@ class BaseProcessor(ABC, typing.Generic[SettingsType, MessageInType, MessageOutT
 
     def __init__(self, *args, settings: SettingsType | None = None, **kwargs) -> None:
         self.settings = _unify_settings(self, settings, *args, **kwargs)
+
+    def update_settings(self, new_settings: SettingsType) -> None:
+        """Apply new settings to this processor, requesting a state reset if needed.
+
+        Diffs ``new_settings`` against the current ``self.settings``. If every
+        changed field is listed in ``NONRESET_SETTINGS_FIELDS``, ``self.settings``
+        is simply rebound and the processor keeps running. Otherwise,
+        ``_request_reset()`` is called so the next message triggers a fresh
+        ``_reset_state`` (for stateful subclasses). Override for finer-grained
+        control than the class-level allow-list provides.
+        """
+        changed = _changed_settings_fields(self.settings, new_settings)
+        self.settings = new_settings
+        if changed - self.NONRESET_SETTINGS_FIELDS:
+            self._request_reset()
+
+    def _request_reset(self) -> None:
+        """Ask for a state reset before the next message is processed.
+
+        No-op on non-stateful processors (they read ``self.settings`` directly).
+        Stateful subclasses override this to flag their hash machinery.
+        """
 
     @abstractmethod
     def _process(self, message: typing.Any) -> typing.Any: ...
@@ -127,6 +154,10 @@ class BaseProducer(ABC, typing.Generic[SettingsType, MessageOutType]):
       receive inputs, will require some sort of IO which will benefit from being async.
     """
 
+    settings: SettingsType
+
+    NONRESET_SETTINGS_FIELDS: typing.ClassVar[frozenset[str]] = frozenset()
+
     @classmethod
     def get_settings_type(cls) -> type[SettingsType]:
         return _get_base_processor_settings_type(cls)
@@ -142,6 +173,21 @@ class BaseProducer(ABC, typing.Generic[SettingsType, MessageOutType]):
 
     def __init__(self, *args, settings: SettingsType | None = None, **kwargs) -> None:
         self.settings = _unify_settings(self, settings, *args, **kwargs)
+
+    def update_settings(self, new_settings: SettingsType) -> None:
+        """Apply new settings to this producer, requesting a state reset if needed.
+
+        See :meth:`BaseProcessor.update_settings`. The reset path matters most
+        for stateful producers, where it reopens hardware or re-derives cached
+        values in ``_reset_state``.
+        """
+        changed = _changed_settings_fields(self.settings, new_settings)
+        self.settings = new_settings
+        if changed - self.NONRESET_SETTINGS_FIELDS:
+            self._request_reset()
+
+    def _request_reset(self) -> None:
+        """Ask for a state reset before the next produce call. See :meth:`BaseProcessor._request_reset`."""
 
     @abstractmethod
     async def _produce(self) -> MessageOutType: ...
