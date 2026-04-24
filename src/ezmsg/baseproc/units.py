@@ -105,15 +105,17 @@ class BaseProducerUnit(ez.Unit, ABC, typing.Generic[SettingsType, MessageOutType
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: SettingsType) -> None:
         """
-        Receive a settings message, override self.SETTINGS, and re-create the producer.
-        Child classes that wish to have fine-grained control over whether the
-        core producer resets on settings changes should override this method.
+        Receive a settings message, override self.SETTINGS, and delegate the
+        update to the underlying producer. The producer decides — via
+        :meth:`BaseProducer.update_settings` and its ``NONRESET_SETTINGS_FIELDS``
+        class variable — whether the change requires a state reset. Override
+        this method (or ``update_settings`` on the producer) for finer control.
 
         Args:
             msg: a settings message.
         """
         self.apply_settings(msg)  # type: ignore
-        self.create_producer()
+        self.producer.update_settings(self.SETTINGS)
 
     @ez.publisher(OUTPUT_SIGNAL)
     async def produce(self) -> typing.AsyncGenerator:
@@ -143,15 +145,17 @@ class BaseProcessorUnit(ez.Unit, ABC, typing.Generic[SettingsType]):
     @ez.subscriber(INPUT_SETTINGS)
     async def on_settings(self, msg: SettingsType) -> None:
         """
-        Receive a settings message, override self.SETTINGS, and re-create the processor.
-        Child classes that wish to have fine-grained control over whether the
-        core processor resets on settings changes should override this method.
+        Receive a settings message, override self.SETTINGS, and delegate the
+        update to the underlying processor. The processor decides — via
+        :meth:`BaseProcessor.update_settings` and its ``NONRESET_SETTINGS_FIELDS``
+        class variable — whether the change requires a state reset. Override
+        this method (or ``update_settings`` on the processor) for finer control.
 
         Args:
             msg: a settings message.
         """
         self.apply_settings(msg)  # type: ignore
-        self.create_processor()
+        self.processor.update_settings(self.SETTINGS)
 
 
 class BaseConsumerUnit(

@@ -1,16 +1,69 @@
 """Composite processor classes for building pipelines."""
 
 import inspect
+import logging
 import pickle
 import typing
 from abc import ABC, abstractmethod
 from types import GeneratorType
 
-from .processor import BaseProcessor, BaseProducer
+from .processor import BaseProcessor, BaseProducer, _changed_settings_fields
 from .protocols import MessageInType, MessageOutType, SettingsType
 from .stateful import Stateful
 from .util.asio import SyncToAsyncGeneratorWrapper
 from .util.typeresolution import check_message_type_compatibility
+
+logger = logging.getLogger(__name__)
+
+
+def _close_child(child: typing.Any) -> None:
+    """Call ``close()`` on a composite child if it exposes one.
+
+    Safe against missing or failing ``close``; exceptions are logged and
+    swallowed so a misbehaving child cannot block a settings-driven rebuild.
+    """
+    if child is None:
+        return
+    close = getattr(child, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:
+        logger.exception("close() raised on composite child; ignoring")
+
+
+def _apply_composite_settings(composite: typing.Any, new_settings: typing.Any) -> None:
+    """Default ``update_settings`` logic shared by Composite{Processor,Producer}.
+
+    Rebinds ``composite.settings`` and, if any changed field is outside
+    ``NONRESET_SETTINGS_FIELDS``, rebuilds the child pipeline from
+    ``_initialize_processors(new_settings)``. Children whose key *and* exact
+    type survive the rebuild keep their state via a delegated
+    ``update_settings`` call; children whose key disappears or whose type
+    changes are closed and replaced.
+    """
+    changed = _changed_settings_fields(composite.settings, new_settings)
+    composite.settings = new_settings
+    if not (changed - composite.NONRESET_SETTINGS_FIELDS):
+        return
+    new_procs = composite._initialize_processors(new_settings)
+    for key, new_proc in new_procs.items():
+        old_proc = composite._procs.get(key)
+        if (
+            old_proc is not None
+            and type(old_proc) is type(new_proc)
+            and hasattr(old_proc, "update_settings")
+            and hasattr(new_proc, "settings")
+        ):
+            old_proc.update_settings(new_proc.settings)
+        else:
+            _close_child(old_proc)
+            composite._procs[key] = new_proc
+    for key in list(composite._procs):
+        if key not in new_procs:
+            _close_child(composite._procs.pop(key))
+    composite._validate_processor_chain()
 
 
 def _get_processor_message_type(
@@ -209,6 +262,15 @@ class CompositeProcessor(
     @abstractmethod
     def _initialize_processors(settings: SettingsType) -> dict[str, typing.Any]: ...
 
+    def update_settings(self, new_settings: SettingsType) -> None:
+        """Rebind settings and reconcile the child pipeline.
+
+        See :func:`_apply_composite_settings` for the reconciliation rules.
+        Override for finer-grained control than the class-level
+        ``NONRESET_SETTINGS_FIELDS`` allow-list provides.
+        """
+        _apply_composite_settings(self, new_settings)
+
     def _process(self, message: MessageInType | None = None) -> MessageOutType | None:
         """
         Process a message through the pipeline of processors. If the message is None, or no message is provided,
@@ -298,6 +360,15 @@ class CompositeProducer(
     def _initialize_processors(
         settings: SettingsType,
     ) -> dict[str, typing.Any]: ...
+
+    def update_settings(self, new_settings: SettingsType) -> None:
+        """Rebind settings and reconcile the child pipeline.
+
+        See :func:`_apply_composite_settings` for the reconciliation rules.
+        Override for finer-grained control than the class-level
+        ``NONRESET_SETTINGS_FIELDS`` allow-list provides.
+        """
+        _apply_composite_settings(self, new_settings)
 
     async def _produce(self) -> MessageOutType:
         """

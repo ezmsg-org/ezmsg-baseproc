@@ -102,6 +102,11 @@ class BaseStatefulProcessor(
         self._state: StateType = state_type()
         # TODO: Enforce that StateType has .hash: int field.
 
+    def _request_reset(self) -> None:
+        # Invalidate the hash so the next __call__ / __acall__ triggers
+        # _reset_state(message) even if the message metadata hasn't changed.
+        self._hash = -1
+
     @abstractmethod
     def _reset_state(self, message: typing.Any) -> None:
         """
@@ -162,6 +167,10 @@ class BaseStatefulProducer(
         self._hash = -1
         state_type = self.__class__.get_state_type()
         self._state: StateType = state_type()
+
+    def _request_reset(self) -> None:
+        # Force the next __acall__ back into the uninitialized branch.
+        self._hash = -1
 
     @abstractmethod
     def _reset_state(self) -> None:
