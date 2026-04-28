@@ -118,6 +118,13 @@ class BaseStatefulProcessor(
         """
         ...
 
+    async def _areset_state(self, message: typing.Any) -> None:
+        """
+        Async variant of `_reset_state`. Override this if reset requires async work;
+        in that case `_reset_state` should bridge via `run_coroutine_sync(self._areset_state(message))`.
+        """
+        return self._reset_state(message)
+
     @abstractmethod
     def _process(self, message: typing.Any) -> typing.Any: ...
 
@@ -131,7 +138,7 @@ class BaseStatefulProcessor(
     async def __acall__(self, message: typing.Any) -> typing.Any:
         msg_hash = self._hash_message(message)
         if msg_hash != self._hash:
-            self._reset_state(message)
+            await self._areset_state(message)
             self._hash = msg_hash
         return await self._aprocess(message)
 
@@ -179,9 +186,16 @@ class BaseStatefulProducer(
         """
         ...
 
+    async def _areset_state(self) -> None:
+        """
+        Async variant of `_reset_state`. Override this if reset requires async work;
+        in that case `_reset_state` should bridge via `run_coroutine_sync(self._areset_state())`.
+        """
+        return self._reset_state()
+
     async def __acall__(self) -> MessageOutType:
         if self._hash == -1:
-            self._reset_state()
+            await self._areset_state()
             self._hash = 0
         return await self._produce()
 
@@ -319,7 +333,7 @@ class BaseAdaptiveTransformer(
         """Async variant of partial_fit_transform."""
         msg_hash = self._hash_message(message)
         if msg_hash != self._hash:
-            self._reset_state(message)
+            await self._areset_state(message)
             self._hash = msg_hash
         await self.apartial_fit(message)
         return await self._aprocess(message)
@@ -351,6 +365,6 @@ class BaseAsyncTransformer(
         # Earlier versions must be explicit: `await obj.__acall__(message)`
         msg_hash = self._hash_message(message)
         if msg_hash != self._hash:
-            self._reset_state(message)
+            await self._areset_state(message)
             self._hash = msg_hash
         return await self._aprocess(message)
