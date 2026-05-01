@@ -102,6 +102,18 @@ from .util.asio import CoroutineExecutionError, SyncToAsyncGeneratorWrapper, run
 
 # Utility classes and functions
 from .util.message import SampleMessage, SampleTriggerMessage, is_sample_message
+from .util.pipeline_settings import (
+    PipelineSettingsEvent,
+    PipelineSettingsEventType,
+    PipelineSettingsProducer,
+    PipelineSettingsProducerSettings,
+    PipelineSettingsProducerState,
+    PipelineSettingsUnit,
+    flatten_component_settings,
+    flatten_ez_settings,
+    sanitize_settings_column_name,
+    sanitize_settings_value,
+)
 from .util.profile import profile_method, profile_subpub
 from .util.typeresolution import check_message_type_compatibility, resolve_typevar
 
@@ -175,6 +187,17 @@ __all__ = [
     "SampleMessage",
     "SampleTriggerMessage",
     "is_sample_message",
+    # Pipeline settings producer
+    "PipelineSettingsEvent",
+    "PipelineSettingsEventType",
+    "PipelineSettingsProducer",
+    "PipelineSettingsProducerSettings",
+    "PipelineSettingsProducerState",
+    "PipelineSettingsUnit",
+    "flatten_component_settings",
+    "flatten_ez_settings",
+    "sanitize_settings_column_name",
+    "sanitize_settings_value",
     # Profiling
     "profile_method",
     "profile_subpub",
