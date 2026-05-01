@@ -256,6 +256,13 @@ class PipelineSettingsProducerSettings(ez.Settings):
     fills this in automatically by discovering its own session's components
     on initialize."""
 
+    graph_address: Optional[tuple[str, int]] = None
+    """Address of the ``GraphServer`` to connect to. ``None`` lets
+    ``GraphContext`` resolve the default (``EZMSG_GRAPHSERVER_ADDR`` env
+    var, falling back to ``127.0.0.1:25978``). Set explicitly when running
+    multiple parallel ezmsg systems, or in tests where ``ez.run`` was
+    called with a non-default ``graph_address``."""
+
 
 @processor_state
 class PipelineSettingsProducerState:
@@ -320,7 +327,7 @@ class PipelineSettingsProducer(
         self._state.initialized = False
 
         try:
-            ctx = ez.GraphContext(auto_start=False)
+            ctx = ez.GraphContext(self.settings.graph_address, auto_start=False)
             await ctx.__aenter__()
         except Exception as exc:
             ez.logger.warning(f"PipelineSettingsProducer could not open GraphContext: {exc}")
@@ -486,6 +493,7 @@ class PipelineSettingsUnit(
                     PipelineSettingsProducerSettings(
                         target_table=self.SETTINGS.target_table,
                         scope_components=tuple(sorted(scope)),
+                        graph_address=self.SETTINGS.graph_address,
                     )
                 )
         await super().initialize()
@@ -500,7 +508,7 @@ class PipelineSettingsUnit(
         await super().shutdown()
 
     async def _discover_session_scope(self) -> Optional[set[str]]:
-        ctx = ez.GraphContext(auto_start=False)
+        ctx = ez.GraphContext(self.SETTINGS.graph_address, auto_start=False)
         await ctx.__aenter__()
         try:
             snapshot = await ctx.snapshot()
