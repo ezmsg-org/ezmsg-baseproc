@@ -190,7 +190,12 @@ class PipelineSettingsEvent:
     """Monotonic sequence number from the graph server."""
 
     timestamp: float
-    """Wall-clock seconds when the change was observed."""
+    """``time.monotonic()`` seconds when the change was observed.
+
+    The graph server stamps settings events with ``time.time()``; the
+    producer rebases each event onto the local monotonic clock at emit
+    time so downstream consumers can compare these against other
+    monotonic timestamps in the pipeline."""
 
     component_address: str
     """Address of the component whose settings changed."""
@@ -426,7 +431,12 @@ class PipelineSettingsProducer(
         if self._state.queue is None:
             await asyncio.Event().wait()
             raise RuntimeError("unreachable")
-        return await self._state.queue.get()
+        event = await self._state.queue.get()
+        # Upstream stamps with time.time(); rebase onto the local monotonic
+        # clock here so consumers see a monotonic timestamp. Sampled per
+        # event — accurate enough given the low rate of settings changes.
+        event.timestamp = event.timestamp - time.time() + time.monotonic()
+        return event
 
     async def _teardown(self) -> None:
         """Cancel the watch task and close the GraphContext."""
