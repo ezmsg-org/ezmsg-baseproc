@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from ezmsg.baseproc import (
+    INIT_FINAL_COMPONENT_ADDRESS,
     PipelineSettingsEvent,
     PipelineSettingsEventType,
     PipelineSettingsProducer,
@@ -133,6 +134,21 @@ def test_event_flatten_for_table_uses_repr_dict_when_no_structured():
 def test_event_default_table_name():
     ev = _make_event()
     assert ev.table_name == "settings_annotations"
+
+
+def test_init_final_sentinel_flatten_for_table_returns_none():
+    """The INIT_FINAL sentinel is a control message — its
+    ``flatten_for_table`` returns ``None`` so JSON-row sinks naturally skip
+    it without warning."""
+    ev = PipelineSettingsEvent(
+        seq=99,
+        timestamp=12345.0,
+        component_address=INIT_FINAL_COMPONENT_ADDRESS,
+        event_type=PipelineSettingsEventType.INITIAL,
+        repr_value="",
+        structured_value=None,
+    )
+    assert ev.flatten_for_table() is None
 
 
 # ---------------------------------------------------------------------------

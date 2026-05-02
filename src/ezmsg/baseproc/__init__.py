@@ -103,6 +103,7 @@ from .util.asio import CoroutineExecutionError, SyncToAsyncGeneratorWrapper, run
 # Utility classes and functions
 from .util.message import SampleMessage, SampleTriggerMessage, is_sample_message
 from .util.pipeline_settings import (
+    INIT_FINAL_COMPONENT_ADDRESS,
     PipelineSettingsEvent,
     PipelineSettingsEventType,
     PipelineSettingsProducer,
@@ -188,6 +189,7 @@ __all__ = [
     "SampleTriggerMessage",
     "is_sample_message",
     # Pipeline settings producer
+    "INIT_FINAL_COMPONENT_ADDRESS",
     "PipelineSettingsEvent",
     "PipelineSettingsEventType",
     "PipelineSettingsProducer",

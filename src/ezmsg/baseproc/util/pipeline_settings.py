@@ -175,6 +175,20 @@ class PipelineSettingsEventType(str, Enum):
 _DEFAULT_TABLE_NAME = "settings_annotations"
 
 
+INIT_FINAL_COMPONENT_ADDRESS: typing.Final[str] = "__init_final__"
+"""Sentinel ``component_address`` value attached to the final
+:class:`PipelineSettingsEvent` of the startup snapshot. Producers emit
+one such event with ``event_type=INITIAL``, ``structured_value=None`` and
+``repr_value=""`` immediately after the last per-component INITIAL has
+been queued. Consumers that need to aggregate the per-component initial
+snapshot (e.g., a typed-column sink that wants one merged row instead of
+N rows + N-1 schema-driven rotations) detect this sentinel by address and
+flush their pending buffer at that point. Sinks that don't need
+aggregation should treat the sentinel as a control message — by default,
+:meth:`PipelineSettingsEvent.flatten_for_table` returns ``None`` for the
+sentinel so JSON-row sinks naturally skip it."""
+
+
 @dataclass
 class PipelineSettingsEvent:
     """One settings-change observation, ready to ship across the graph.
@@ -216,14 +230,21 @@ class PipelineSettingsEvent:
     table_name: str = _DEFAULT_TABLE_NAME
     """Name of the target table/series the consuming sink should write into."""
 
-    def flatten_for_table(self) -> dict[str, Any]:
+    def flatten_for_table(self) -> Optional[dict[str, Any]]:
         """Project this event into ``NWBPointRow``-compatible columns.
 
         Returns ``{"data": json_string}`` so the event can be appended to a
         ``pynwb.misc.AnnotationSeries`` (single-string-per-timestamp). The
         JSON payload self-describes the change with ``component``,
         ``event_type``, ``seq``, and the structured ``settings`` snapshot.
+
+        Returns ``None`` for the :data:`INIT_FINAL_COMPONENT_ADDRESS`
+        sentinel — the event is a control marker for typed-column sinks
+        and has no row to write in a JSON-row sink.
         """
+        if self.component_address == INIT_FINAL_COMPONENT_ADDRESS:
+            return None
+
         if self.structured_value is not None:
             payload: typing.Union[dict[str, Any], str] = self.structured_value
         elif isinstance(self.repr_value, dict):
@@ -351,7 +372,15 @@ class PipelineSettingsProducer(
             await self._teardown()
 
     async def _seed_initial_events(self) -> None:
-        """Fill the queue with one ``INITIAL`` event per in-scope component."""
+        """Fill the queue with one ``INITIAL`` event per in-scope component.
+
+        After the per-component events, queue one final sentinel event
+        (``component_address=INIT_FINAL_COMPONENT_ADDRESS``,
+        ``structured_value=None``) so consumers that aggregate the
+        startup snapshot have a clean batch boundary. JSON-row sinks
+        skip the sentinel via :meth:`PipelineSettingsEvent.flatten_for_table`
+        returning ``None``.
+        """
         ctx = self._state.ctx
         if ctx is None or self._state.queue is None:
             return
@@ -368,6 +397,8 @@ class PipelineSettingsProducer(
                 latest_per_addr[ev.component_address] = ev
 
         scope = self._state.scope
+        emitted_any = False
+        max_initial_ts = 0.0
         for addr in sorted(settings_snapshot.keys()):
             if scope is not None and addr not in scope:
                 continue
@@ -389,11 +420,26 @@ class PipelineSettingsProducer(
                 )
             )
             self._state.last_seq = max(self._state.last_seq, seq)
+            max_initial_ts = max(max_initial_ts, ts)
+            emitted_any = True
 
         self._state.last_seq = max(
             self._state.last_seq,
             max((ev.seq for ev in seed_events), default=0),
         )
+
+        if emitted_any:
+            self._state.queue.put_nowait(
+                PipelineSettingsEvent(
+                    seq=self._state.last_seq,
+                    timestamp=max_initial_ts or time.time(),
+                    component_address=INIT_FINAL_COMPONENT_ADDRESS,
+                    event_type=PipelineSettingsEventType.INITIAL,
+                    repr_value="",
+                    structured_value=None,
+                    table_name=self.settings.target_table,
+                )
+            )
 
     async def _watch(self, after_seq: int) -> None:
         """Forward live settings events into the queue until cancelled."""
