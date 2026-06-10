@@ -35,6 +35,7 @@ docs = [
   "sphinx-autodoc-typehints",
   "sphinx-copybutton",
   "myst-parser",
+  "sphinxcontrib-mermaid",
 ]
 
 # Uncomment if your package provides CLI commands

@@ -33,7 +33,12 @@ extensions = [
     "sphinx_autodoc_typehints",
     "sphinx_copybutton",
     "myst_parser",  # For markdown files
+    "sphinxcontrib.mermaid",
 ]
+
+# Treat native ```mermaid fences in markdown as mermaid directives so they
+# render as diagrams in Sphinx while remaining renderable on GitHub.
+myst_fence_as_directive = ["mermaid"]
 
 templates_path = ["_templates"]
 source_suffix = {
