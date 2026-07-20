@@ -16,11 +16,14 @@ from .units import BaseProducerUnit
 class ClockSettings(ez.Settings):
     """Settings for :obj:`ClockProducer`."""
 
-    dispatch_rate: float = math.inf
+    dispatch_rate: float | None = None
     """
     Dispatch rate in Hz.
-    - Finite value (e.g., 100.0): Dispatch 100 times per second
-    - math.inf: Dispatch as fast as possible (no sleep)
+    - Finite value (e.g., 100.0): Dispatch 100 times per second.
+    - None (default): Dispatch as fast as possible (no sleep). ``math.inf`` is
+      also accepted as an "unthrottled" sentinel for backward compatibility, but
+      None is preferred (math.inf is not JSON-serializable, which breaks tools
+      that reflect the settings schema, e.g. the ezmsg dashboard).
     """
 
 
@@ -52,12 +55,15 @@ class ClockProducer(BaseStatefulProducer[ClockSettings, AxisArray.LinearAxis, Cl
         self._state.t_0 = time.monotonic()
         self._state.n_dispatch = 0
 
+    @property
+    def _throttled(self) -> bool:
+        """Whether a finite dispatch rate is set (None / inf mean unthrottled)."""
+        rate = self.settings.dispatch_rate
+        return rate is not None and math.isfinite(rate)
+
     def _make_output(self, timestamp: float) -> AxisArray.LinearAxis:
         """Create LinearAxis output with gain and offset."""
-        if math.isinf(self.settings.dispatch_rate):
-            gain = 0.0
-        else:
-            gain = 1.0 / self.settings.dispatch_rate
+        gain = 1.0 / self.settings.dispatch_rate if self._throttled else 0.0
         return AxisArray.LinearAxis(gain=gain, offset=timestamp)
 
     def __call__(self) -> AxisArray.LinearAxis:
@@ -67,7 +73,7 @@ class ClockProducer(BaseStatefulProducer[ClockSettings, AxisArray.LinearAxis, Cl
             self._hash = 0
 
         now = time.monotonic()
-        if math.isfinite(self.settings.dispatch_rate):
+        if self._throttled:
             target_time = self.state.t_0 + (self.state.n_dispatch + 1) / self.settings.dispatch_rate
             if target_time > now:
                 time.sleep(target_time - now)
@@ -80,7 +86,7 @@ class ClockProducer(BaseStatefulProducer[ClockSettings, AxisArray.LinearAxis, Cl
     async def _produce(self) -> AxisArray.LinearAxis:
         """Generate next clock tick."""
         now = time.monotonic()
-        if math.isfinite(self.settings.dispatch_rate):
+        if self._throttled:
             target_time = self.state.t_0 + (self.state.n_dispatch + 1) / self.settings.dispatch_rate
             if target_time > now:
                 await asyncio.sleep(target_time - now)
