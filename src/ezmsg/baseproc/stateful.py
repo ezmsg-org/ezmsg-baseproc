@@ -35,6 +35,19 @@ class Stateful(ABC, typing.Generic[StateType]):
 
     _state: StateType
 
+    STREAMING_DIMS: typing.ClassVar[tuple[str, ...]] = ("time",)
+    """Fallback chunk dimension for messages that do not declare one.
+
+    Consulted only when :attr:`~ezmsg.util.messages.axisarray.AxisArray.chunk_dim`
+    is ``None``. ``("time",)`` is right for a raw signal and wrong downstream of
+    a windowing stage, where the message is ``(win, time, ch)`` and ``win`` is
+    what grows; such a processor sets ``("win",)``.
+
+    Prefer teaching the producer to declare ``chunk_dim``. That puts the answer
+    in the one place that knows it, rather than asking each consumer to guess
+    about a message it did not create.
+    """
+
     @classmethod
     def get_state_type(cls) -> type[StateType]:
         return _get_base_processor_state_type(cls)
@@ -55,18 +68,109 @@ class Stateful(ABC, typing.Generic[StateType]):
         """
         Check if the message metadata indicates a need for state reset.
 
-        This method is not abstract because there are some processors that might only
-        need to reset once but are otherwise insensitive to the message structure.
+        For a message that declares :attr:`~ezmsg.util.messages.axisarray.AxisArray.chunk_dim`,
+        the default keys on everything describing the stream's *shape and
+        identity* but not its per-chunk extent: the message key, its dims, the
+        length of every dimension except the one it is a chunk along, the
+        coordinate values on those dimensions, and the gain and offset of any
+        linear axis among them. See :meth:`_message_hash`.
 
-        For example, an activation function that benefits greatly from pre-computed values should
-        do this computation in `_reset_state` and attach those values to the processor state,
-        but if it e.g. operates elementwise on the input then it doesn't care if the incoming
-        data changes shape or sample rate so you don't need to reset again.
+        A message that does not declare it falls back to
+        :attr:`STREAMING_DIMS`. That fallback is a guess, and a wrong guess is
+        not a small error: name a dimension that is actually stable and the
+        processor stops noticing real changes to it; name one that grows and it
+        resets on every message. It is right for the common ``(time, ch)``
+        stream and wrong downstream of a windowing stage.
 
-        All processors' initial state should have `.hash = -1` then by returning `0` here
-        we force an update on the first message.
+        Override to add something the default cannot know about -- a dtype the
+        state depends on, a value derived from the processor's own state -- or
+        to *narrow* it, for a processor whose state genuinely does not depend on
+        channel identity. In either case prefer calling :meth:`_message_hash`
+        with the appropriate arguments over rebuilding the hash from scratch, so
+        that the axis-value coverage is not silently lost.
+
+        Processors whose state is insensitive to everything may return a
+        constant. All processors' initial state has ``.hash = -1``, so any
+        constant forces exactly one reset on the first message.
         """
-        return 0
+        return self._message_hash(message)
+
+    def _message_hash(
+        self,
+        message: typing.Any,
+        *,
+        exclude_dims: typing.Iterable[str] | None = None,
+        include_key: bool = True,
+        extra: typing.Iterable[typing.Any] = (),
+    ) -> int:
+        """
+        Hash the parts of an ``AxisArray`` that a cached state can depend on.
+
+        Folds in, in dimension order:
+
+        * ``message.key`` (unless *include_key* is False) and ``message.dims``
+        * for each dimension other than the chunk dimension: its length, plus
+          either the coordinate axis's
+          :attr:`~ezmsg.util.messages.axisarray.CoordinateAxis.fingerprint` or a
+          linear axis's ``gain`` **and** ``offset``
+        * for the chunk dimension: only the ``gain``
+
+        ``offset`` is dropped for the chunk dimension alone, where it simply
+        counts off elapsed samples. Everywhere else it locates the axis and a
+        change in it is a configuration change: a spectrum whose ``freq`` axis
+        moves from 5-25 Hz to 70-90 Hz keeps the same gain and the same length,
+        and is only distinguishable by its offset.
+
+        The fingerprint is what makes a channel *relabel* at a fixed channel
+        count visible. Without it a filter keeps per-channel state belonging to
+        channels that are no longer there, and the first samples of the new ones
+        come out dominated by the old ones' history.
+
+        The chunk dimension is ``message.chunk_dim`` when declared, else
+        :attr:`STREAMING_DIMS`. Naming a dimension the message does not have is
+        harmless -- nothing matches, so nothing is excluded.
+
+        Non-``AxisArray`` messages hash to a constant, giving the same
+        reset-once-then-never behaviour those processors had before.
+
+        :param exclude_dims: Further dimensions to leave out, *in addition to*
+            the chunk dimension. Use for a processor whose state genuinely does
+            not depend on a dimension's identity.
+        :param include_key: Set False for a processor whose state depends only
+            on shape, so that switching streams does not force a reset.
+        :param extra: Additional hashable values to fold in.
+        """
+        if not isinstance(message, AxisArray):
+            return 0
+
+        # The producer renamed the dims and so is the only party that reliably
+        # knows which one grows; fall back to the class default when it is silent.
+        chunk_dim = getattr(message, "chunk_dim", None)
+        exclude = set(self.STREAMING_DIMS if chunk_dim is None else (chunk_dim,))
+        if exclude_dims is not None:
+            exclude.update(exclude_dims)
+        parts: list[typing.Any] = [message.key] if include_key else []
+        parts.append(tuple(message.dims))
+
+        for idx, dim in enumerate(message.dims):
+            axis = message.axes.get(dim)
+            gain = getattr(axis, "gain", None)
+            if dim in exclude:
+                if gain is not None:
+                    parts.append((dim, gain))
+                continue
+            parts.append((dim, message.data.shape[idx]))
+            # A CoordinateAxis identifies itself by its values; a LinearAxis by
+            # gain *and* offset, which together say where the axis starts and
+            # how far it steps; a dimension with no axis, only by its length.
+            fingerprint = getattr(axis, "fingerprint", None)
+            if fingerprint is not None:
+                parts.append(fingerprint)
+            elif gain is not None:
+                parts.append((gain, getattr(axis, "offset", None)))
+
+        parts.extend(extra)
+        return hash(tuple(parts))
 
     @abstractmethod
     def _reset_state(self, *args: typing.Any, **kwargs: typing.Any) -> None:

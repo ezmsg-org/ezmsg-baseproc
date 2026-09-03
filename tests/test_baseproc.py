@@ -30,6 +30,7 @@ from ezmsg.baseproc import (
     _get_processor_message_type,
     processor_state,
 )
+from ezmsg.baseproc.stateful import Stateful
 
 # -- Mock Classes for Testing --
 
@@ -1231,3 +1232,235 @@ class TestCompositeProducer:
         # Hash not set to 3 as expected as processor is called after setting the hash
         # Hash set to 0 via the _reset_state method.
         assert composite_producer._procs["stateful_processor"]._hash == 0
+
+
+class TestMessageHashDefault:
+    """The default `_hash_message` keys on stream shape and channel identity.
+
+    A processor that caches per-channel state -- a filter's `zi`, a scaler's
+    running mean -- is only valid for the channels it was built for. Keying on
+    shape alone cannot see a source that swaps channels without changing how
+    many it sends, and the stale state then contaminates the new channels.
+    """
+
+    class Probe(Stateful[MockState]):
+        def _reset_state(self, message):  # pragma: no cover - not exercised
+            pass
+
+        def _process(self, message):  # pragma: no cover - not exercised
+            return message
+
+        def stateful_op(self, state, message):  # pragma: no cover - not exercised
+            raise NotImplementedError
+
+    @staticmethod
+    def _msg(n_time, labels, fs=100.0, key="dev", coord_time=False):
+        import numpy as np
+
+        time_axis = (
+            AxisArray.CoordinateAxis(data=np.arange(n_time, dtype=float), dims=["time"])
+            if coord_time
+            else AxisArray.TimeAxis(fs=fs)
+        )
+        return AxisArray(
+            np.zeros((n_time, len(labels))),
+            dims=["time", "ch"],
+            axes={
+                "time": time_axis,
+                "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
+            },
+            key=key,
+            chunk_dim="time",
+        )
+
+    @staticmethod
+    def _win_msg(n_win, n_time=10, labels=("c0", "c1")):
+        import numpy as np
+
+        return AxisArray(
+            np.zeros((n_win, n_time, len(labels))),
+            dims=["win", "time", "ch"],
+            axes={
+                "win": AxisArray.TimeAxis(fs=10.0),
+                "time": AxisArray.TimeAxis(fs=100.0),
+                "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
+            },
+            key="dev",
+            chunk_dim="win",
+        )
+
+    def _resets(self, proc, messages):
+        """Indices of the messages that would trigger a state reset."""
+        out, prev = [], object()
+        for idx, msg in enumerate(messages):
+            msg_hash = proc._hash_message(msg)
+            if msg_hash != prev:
+                out.append(idx)
+            prev = msg_hash
+        return out
+
+    def test_chunk_size_jitter_does_not_reset(self):
+        """The streaming dim's length changes every message by definition."""
+        proc = self.Probe()
+        msgs = [self._msg(n, ["c0", "c1"]) for n in (30, 17, 30, 41)]
+        assert self._resets(proc, msgs) == [0]
+
+    def test_relabel_at_fixed_channel_count_resets(self):
+        """The whole point: shape is identical, channels are not."""
+        proc = self.Probe()
+        msgs = [self._msg(30, ["c0", "c1"]), self._msg(30, ["x0", "x1"])]
+        assert self._resets(proc, msgs) == [0, 1]
+
+    def test_channel_count_sample_rate_and_key_reset(self):
+        proc = self.Probe()
+        msgs = [
+            self._msg(30, ["c0", "c1"]),
+            self._msg(30, ["c0", "c1", "c2"]),  # count
+            self._msg(30, ["c0", "c1", "c2"], fs=200.0),  # sample rate
+            self._msg(30, ["c0", "c1", "c2"], fs=200.0, key="other"),  # key
+        ]
+        assert self._resets(proc, msgs) == [0, 1, 2, 3]
+
+    def test_time_offset_alone_does_not_reset(self):
+        """`offset` advances every message and must never be folded in."""
+        proc = self.Probe()
+        msgs = []
+        for i in range(3):
+            m = self._msg(30, ["c0", "c1"])
+            m.axes["time"] = AxisArray.TimeAxis(fs=100.0, offset=i * 0.3)
+            msgs.append(m)
+        assert self._resets(proc, msgs) == [0]
+
+    def test_coordinate_streaming_axis_does_not_reset(self):
+        """Irregular event streams carry per-message values on `time`; folding
+        those in would reset on every message."""
+        proc = self.Probe()
+        msgs = [self._msg(5, ["c0", "c1"], coord_time=True) for _ in range(3)]
+        assert self._resets(proc, msgs) == [0]
+
+    def test_chunk_dim_names_the_dimension_that_grows(self):
+        """Downstream of a windowing stage, `win` grows and `time` is fixed.
+
+        A consumer cannot infer this -- `time` is the chunk dimension on a raw
+        signal and a fixed within-window axis here -- so the producer declares
+        it and the consumer needs to know nothing.
+        """
+        msgs = [
+            self._win_msg(3),
+            self._win_msg(1),  # window count jitters
+            self._win_msg(4),
+            self._win_msg(2, labels=("x0", "x1")),  # relabel
+            self._win_msg(2, labels=("x0", "x1")),
+            self._win_msg(2, n_time=20, labels=("x0", "x1")),  # window length
+        ]
+        assert self._resets(self.Probe(), msgs) == [0, 3, 5]
+
+    def test_undeclared_falls_back_to_streaming_dims(self):
+        """Without a declaration the class default is used, which is right for
+        the common (time, ch) stream: chunk-size jitter must not reset."""
+        import numpy as np
+
+        def undeclared(n_time, labels=("c0", "c1")):
+            return AxisArray(
+                np.zeros((n_time, len(labels))),
+                dims=["time", "ch"],
+                axes={
+                    "time": AxisArray.TimeAxis(fs=100.0),
+                    "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
+                },
+                key="dev",
+            )
+
+        proc = self.Probe()
+        assert self._resets(proc, [undeclared(n) for n in (30, 17, 41)]) == [0]
+        # ...and still catches a relabel, which is the point of the default.
+        assert proc._hash_message(undeclared(30)) != proc._hash_message(undeclared(30, labels=("x0", "x1")))
+
+    def test_fallback_naming_an_absent_dim_is_harmless(self):
+        """A message with no `time` dim at all: nothing matches, so nothing is
+        excluded, and every dimension is stable message to message."""
+        import numpy as np
+
+        def spectrum():
+            return AxisArray(
+                np.zeros((21, 2)),
+                dims=["freq", "ch"],
+                axes={
+                    "freq": AxisArray.LinearAxis(gain=1.0, offset=5.0, unit="Hz"),
+                    "ch": AxisArray.CoordinateAxis(data=np.array(["c0", "c1"]), dims=["ch"]),
+                },
+                key="dev",
+            )
+
+        assert self._resets(self.Probe(), [spectrum() for _ in range(3)]) == [0]
+
+    def test_non_axisarray_message_resets_once(self):
+        """Processors on other message types keep their previous behaviour."""
+        proc = self.Probe()
+        assert proc._hash_message(MockMessageA()) == 0
+        assert self._resets(proc, [MockMessageA(), MockMessageA(), MockMessageA()]) == [0]
+
+    def test_include_key_false(self):
+        proc = self.Probe()
+        assert proc._message_hash(self._msg(30, ["c0"]), include_key=False) == proc._message_hash(
+            self._msg(30, ["c0"], key="other"), include_key=False
+        )
+
+    def test_exclude_dims_suppresses_channel_identity(self):
+        proc = self.Probe()
+        assert proc._message_hash(self._msg(30, ["c0", "c1"]), exclude_dims=("time", "ch")) == proc._message_hash(
+            self._msg(30, ["x0", "x1"]), exclude_dims=("time", "ch")
+        )
+
+    def test_extra_is_folded_in(self):
+        proc = self.Probe()
+        msg = self._msg(30, ["c0", "c1"])
+        assert proc._message_hash(msg, extra=("float32",)) != proc._message_hash(msg, extra=("float64",))
+
+    def test_non_streaming_linear_axis_offset_is_folded_in(self):
+        """A frequency band is located by its offset, not just its step size.
+
+        A spectrum covering 5-25 Hz and one covering 70-90 Hz have the same
+        gain and the same length; only the offset tells them apart. `offset` is
+        dropped for the streaming dimension, where it merely counts elapsed
+        samples, and nowhere else.
+        """
+        import numpy as np
+
+        def spectrum(freq_offset):
+            return AxisArray(
+                np.zeros((4, 21, 2)),
+                dims=["time", "freq", "ch"],
+                axes={
+                    "time": AxisArray.TimeAxis(fs=100.0),
+                    "freq": AxisArray.LinearAxis(gain=1.0, offset=freq_offset, unit="Hz"),
+                    "ch": AxisArray.CoordinateAxis(data=np.array(["c0", "c1"]), dims=["ch"]),
+                },
+                key="dev",
+                chunk_dim="time",
+            )
+
+        proc = self.Probe()
+        assert proc._hash_message(spectrum(5.0)) != proc._hash_message(spectrum(70.0))
+        assert proc._hash_message(spectrum(5.0)) == proc._hash_message(spectrum(5.0))
+
+    def test_exclude_dims_is_additive_to_the_chunk_dim(self):
+        """Naming a dimension to ignore must not un-exclude the chunk dim."""
+        import numpy as np
+
+        def msg(n_time, labels):
+            return AxisArray(
+                np.zeros((n_time, len(labels))),
+                dims=["time", "ch"],
+                axes={
+                    "time": AxisArray.TimeAxis(fs=100.0),
+                    "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
+                },
+                key="dev",
+                chunk_dim="time",
+            )
+
+        proc = self.Probe()
+        assert proc._message_hash(msg(30, ["c0", "c1"]), exclude_dims=("ch",)) == proc._message_hash(
+            msg(17, ["x0", "x1"]), exclude_dims=("ch",)
+        )
