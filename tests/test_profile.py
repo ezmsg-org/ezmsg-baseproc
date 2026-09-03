@@ -135,6 +135,47 @@ def test_logger_append_header_match(mock_logger_path):
             handler.close()
 
 
+def test_logger_append_empty_file(mock_logger_path, caplog):
+    """An existing but empty log file is not a header mismatch and must not warn."""
+    test_logpath = mock_logger_path
+    with open(test_logpath, "w") as f:
+        f.truncate(0)
+
+    with caplog.at_level(logging.WARNING, logger="ezmsg"):
+        logger = _setup_logger(append=True)
+
+    assert "header mismatch" not in caplog.text.lower()
+
+    # The header is still written to the empty file.
+    with open(test_logpath, "r") as f:
+        first_line = f.readline().strip()
+    assert first_line == HEADER
+
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+
+
+def test_no_empty_file_when_profiling_disabled(mock_logger_path):
+    """With profiling off (level > DEBUG) no zero-byte log file is left behind."""
+    test_logpath = mock_logger_path
+    test_logpath.unlink(missing_ok=True)
+
+    # _setup_logger mutates the shared "ezprofile" logger; restore its level afterwards.
+    prev_level = logging.getLogger("ezprofile").level
+    try:
+        with patch.dict(os.environ, {"EZMSG_LOGLEVEL": "INFO"}):
+            logger = _setup_logger(append=True)
+
+        assert not test_logpath.exists()
+
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handler.close()
+    finally:
+        logging.getLogger("ezprofile").setLevel(prev_level)
+
+
 def test_profile_method_decorator():
     """Test the profile_method decorator."""
 

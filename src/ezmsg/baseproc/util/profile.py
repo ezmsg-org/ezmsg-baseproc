@@ -34,7 +34,10 @@ def _setup_logger(append: bool = False) -> logging.Logger:
             try:
                 with open(logpath) as f:
                     first_line = f.readline().rstrip()
-                if first_line == HEADER:
+                if not first_line:
+                    # Empty file; nothing to mismatch against, write the header ourselves.
+                    pass
+                elif first_line == HEADER:
                     write_header = False
                 else:
                     # Remove the file if appending, but headers do not match
@@ -61,8 +64,9 @@ def _setup_logger(append: bool = False) -> logging.Logger:
     # Set the logger's level to EZMSG_LOGLEVEL env var value if it exists, otherwise INFO
     _logger.setLevel(os.environ.get("EZMSG_LOGLEVEL", "INFO").upper())
 
-    # Create a file handler to write log messages to the log file
-    fh = logging.FileHandler(logpath)
+    # Create a file handler to write log messages to the log file.
+    # delay=True so a run with profiling disabled doesn't leave a zero-byte file behind.
+    fh = logging.FileHandler(logpath, delay=True)
     fh.setLevel(logging.DEBUG)  # Set the file handler log level to DEBUG
 
     # Add the file handler to the logger
