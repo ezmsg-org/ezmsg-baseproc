@@ -145,29 +145,44 @@ class Stateful(ABC, typing.Generic[StateType]):
 
         # The producer renamed the dims and so is the only party that reliably
         # knows which one grows; fall back to the class default when it is silent.
-        chunk_dim = getattr(message, "chunk_dim", None)
-        exclude = set(self.STREAMING_DIMS if chunk_dim is None else (chunk_dim,))
-        if exclude_dims is not None:
-            exclude.update(exclude_dims)
-        parts: list[typing.Any] = [message.key] if include_key else []
-        parts.append(tuple(message.dims))
+        chunk_dim = message.chunk_dim
+        if chunk_dim is None:
+            exclude = self.STREAMING_DIMS if exclude_dims is None else (*self.STREAMING_DIMS, *exclude_dims)
+        elif exclude_dims is None:
+            exclude = (chunk_dim,)
+        else:
+            exclude = (chunk_dim, *exclude_dims)
 
-        for idx, dim in enumerate(message.dims):
-            axis = message.axes.get(dim)
-            gain = getattr(axis, "gain", None)
+        # Hoisted out of the loop: this runs on every message of every stream,
+        # so the repeated attribute lookups are worth removing. A tuple rather
+        # than a set for `exclude` -- it holds one or two entries in practice,
+        # where a linear scan beats building a set.
+        dims = message.dims
+        axes = message.axes
+        shape = message.data.shape
+        parts: list[typing.Any] = [message.key] if include_key else []
+        parts.append(tuple(dims))
+
+        for idx, dim in enumerate(dims):
+            axis = axes.get(dim)
             if dim in exclude:
+                gain = getattr(axis, "gain", None)
                 if gain is not None:
                     parts.append((dim, gain))
                 continue
-            parts.append((dim, message.data.shape[idx]))
+            parts.append((dim, shape[idx]))
             # A CoordinateAxis identifies itself by its values; a LinearAxis by
             # gain *and* offset, which together say where the axis starts and
             # how far it steps; a dimension with no axis, only by its length.
+            # Asked for in that order so a coordinate axis costs one lookup:
+            # fetching `gain` first made it pay a failed one it never used.
             fingerprint = getattr(axis, "fingerprint", None)
             if fingerprint is not None:
                 parts.append(fingerprint)
-            elif gain is not None:
-                parts.append((gain, getattr(axis, "offset", None)))
+            else:
+                gain = getattr(axis, "gain", None)
+                if gain is not None:
+                    parts.append((gain, axis.offset))
 
         parts.extend(extra)
         return hash(tuple(parts))
