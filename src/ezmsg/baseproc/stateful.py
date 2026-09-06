@@ -14,6 +14,7 @@ from .processor import (
 )
 from .protocols import MessageInType, MessageOutType, SettingsType, StateType
 from .util.asio import run_coroutine_sync
+from .util.chunkdim import STREAMING_DIMS as _STREAMING_DIMS
 from .util.message import is_sample_message
 from .util.typeresolution import resolve_typevar
 
@@ -193,7 +194,7 @@ class Stateful(ABC, typing.Generic[StateType]):
     is the safe state: it costs a full recomputation, never a wrong answer.
     """
 
-    STREAMING_DIMS: typing.ClassVar[tuple[str, ...]] = ("time",)
+    STREAMING_DIMS: typing.ClassVar[tuple[str, ...]] = _STREAMING_DIMS
     """Fallback chunk dimension for messages that do not declare one.
 
     Consulted only when :attr:`~ezmsg.util.messages.axisarray.AxisArray.chunk_dim`

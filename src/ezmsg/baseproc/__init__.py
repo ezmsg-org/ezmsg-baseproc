@@ -99,6 +99,18 @@ from .units import (
     get_base_transformer_type,
 )
 from .util.asio import CoroutineExecutionError, SyncToAsyncGeneratorWrapper, run_coroutine_sync
+from .util.chunkdim import (
+    STREAMING_DIMS,
+    resolve_chunk_dim,
+    resolve_configured_chunk_dim,
+    resolve_feature_dim,
+    resolve_transform_dim,
+)
+from .util.deprecation import (
+    DEFAULT_REMOVAL,
+    suppress_axis_deprecation,
+    warn_axis_deprecated,
+)
 
 # Utility classes and functions
 from .util.message import SampleMessage, SampleTriggerMessage, is_sample_message
@@ -185,9 +197,17 @@ __all__ = [
     "_get_base_processor_state_type",
     "_get_processor_message_type",
     # Message types
+    "DEFAULT_REMOVAL",
+    "STREAMING_DIMS",
     "SampleMessage",
     "SampleTriggerMessage",
     "is_sample_message",
+    "resolve_chunk_dim",
+    "resolve_configured_chunk_dim",
+    "resolve_feature_dim",
+    "resolve_transform_dim",
+    "suppress_axis_deprecation",
+    "warn_axis_deprecated",
     # Pipeline settings producer
     "INIT_FINAL_COMPONENT_ADDRESS",
     "PipelineSettingsEvent",

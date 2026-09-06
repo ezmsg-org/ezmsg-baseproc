@@ -34,7 +34,7 @@ class SampleMessage:
 
     def __post_init__(self):
         warnings.warn(
-            "SampleMessage is deprecated. Use AxisArray with " "attrs={'trigger': SampleTriggerMessage(...)} instead.",
+            "SampleMessage is deprecated. Use AxisArray with attrs={'trigger': SampleTriggerMessage(...)} instead.",
             DeprecationWarning,
             stacklevel=2,
         )
