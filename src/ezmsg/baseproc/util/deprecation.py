@@ -8,18 +8,18 @@ message, so the carried state applies message N's tail to message N+1's head at
 the same coordinate, forever.
 
 Which dimension that is belongs to the producer, and
-:attr:`~ezmsg.util.messages.axisarray.AxisArray.chunk_dim` is where it says so.
+:attr:`~ezmsg.util.messages.axisarray.AxisArray.stream_dim` is where it says so.
 A setting that lets a consumer disagree can only be used to be wrong, so it is
-going away; see :func:`~ezmsg.baseproc.util.chunkdim.resolve_chunk_dim`.
+going away; see :func:`~ezmsg.baseproc.util.streamdim.resolve_stream_dim`.
 
 During the deprecation window the setting is still honoured, so nothing changes
 behaviour until it is removed. Two warnings partition the call sites:
 
 * This module's construction-time :class:`FutureWarning` fires for *every* use,
   including a harmless ``axis="time"`` on a raw stream. It means "delete this".
-* :func:`~ezmsg.baseproc.util.chunkdim.resolve_configured_chunk_dim`'s runtime
+* :func:`~ezmsg.baseproc.util.streamdim.resolve_configured_stream_dim`'s runtime
   warning fires only when the configured axis disagrees with a *declared*
-  ``chunk_dim``. It means "deleting this will change what this stage computes".
+  ``stream_dim``. It means "deleting this will change what this stage computes".
 
 To find every remaining call site in a pipeline, run its tests with
 ``-W error::FutureWarning``.
@@ -128,8 +128,8 @@ def warn_axis_deprecated(
         f"{type(settings).__name__}.{field} is deprecated and will be removed in "
         f"{package} {removal}. This processor carries state between messages, which "
         f"is only meaningful along the dimension they accumulate along; that "
-        f"dimension now comes from AxisArray.chunk_dim. Drop the setting. "
-        f"If the stream's chunk_dim is wrong, fix it at the producer.",
+        f"dimension now comes from AxisArray.stream_dim. Drop the setting. "
+        f"If stream_dim is wrong, fix it at the producer.",
         FutureWarning,
         stacklevel=_user_stacklevel(),
     )

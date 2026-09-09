@@ -9,7 +9,7 @@ indistinguishable from recomputing", checked against a randomised stream of ever
 mutation a real one can undergo.
 
 Three bugs were found this way and each has a named test below: a witness blind
-to ``exclude_dims``, a specialised validator that assumed the chunk axis stayed
+to ``exclude_dims``, a specialised validator that assumed the stream axis stayed
 linear, and a generic one that skipped an excluded dimension whose axis had
 disappeared.
 """
@@ -50,20 +50,20 @@ def msg(
     *,
     fs: float = 100.0,
     key: str = "dev",
-    n_chunk: int = 8,
+    n_stream: int = 8,
     offset: float = 0.0,
     ch_axis: CoordinateAxis | None = None,
-    chunk_dim: str | None = "time",
+    stream_dim: str | None = "time",
 ) -> AxisArray:
     return AxisArray(
-        np.zeros((n_chunk, len(labels)), np.float32),
+        np.zeros((n_stream, len(labels)), np.float32),
         dims=["time", "ch"],
         axes={
             "time": AxisArray.TimeAxis(fs=fs, offset=offset),
             "ch": ch_axis if ch_axis is not None else CoordinateAxis(data=np.array(labels), dims=["ch"]),
         },
         key=key,
-        **({"chunk_dim": chunk_dim} if chunk_dim else {}),
+        **({"stream_dim": stream_dim} if stream_dim else {}),
     )
 
 
@@ -75,7 +75,7 @@ class TestTheFastPathAgreesWithRecomputing:
         first = probe._message_hash(msg(["a", "b"], ch_axis=hoisted))
         probe._hash = first
         for step in range(1, 6):
-            m = msg(["a", "b"], ch_axis=hoisted, offset=step * 0.1, n_chunk=8 + step)
+            m = msg(["a", "b"], ch_axis=hoisted, offset=step * 0.1, n_stream=8 + step)
             assert probe._message_hash(m) == recomputed(m) == first
 
     def test_a_rebuilt_axis_with_equal_content_still_agrees(self):
@@ -105,22 +105,22 @@ class TestTheFastPathAgreesWithRecomputing:
         assert after == recomputed(mutate())
         assert after != before
 
-    def test_withdrawing_chunk_dim_changes_nothing_here(self):
+    def test_withdrawing_stream_dim_changes_nothing_here(self):
         """Undeclared falls back to ``STREAMING_DIMS``, which names the same
         dimension for a ``(time, ch)`` stream -- so the hash is unchanged, and
         the witness has to agree rather than assume a declaration change matters."""
         probe = Probe()
         before = probe._message_hash(msg(["a", "b"]))
         probe._hash = before
-        undeclared = msg(["a", "b"], chunk_dim=None)
+        undeclared = msg(["a", "b"], stream_dim=None)
         assert probe._message_hash(undeclared) == recomputed(undeclared) == before
 
-    def test_chunk_size_jitter_does_not_disturb_it(self):
+    def test_stream_size_jitter_does_not_disturb_it(self):
         probe = Probe()
         hoisted = CoordinateAxis(data=np.array(["a", "b"]), dims=["ch"])
-        first = probe._message_hash(msg(["a", "b"], ch_axis=hoisted, n_chunk=8))
+        first = probe._message_hash(msg(["a", "b"], ch_axis=hoisted, n_stream=8))
         probe._hash = first
-        assert probe._message_hash(msg(["a", "b"], ch_axis=hoisted, n_chunk=37)) == first
+        assert probe._message_hash(msg(["a", "b"], ch_axis=hoisted, n_stream=37)) == first
 
 
 class TestTheBugsTheFuzzFound:
@@ -132,7 +132,7 @@ class TestTheBugsTheFuzzFound:
         probe._hash = probe._message_hash(m)
         assert probe._message_hash(m, exclude_dims=("ch",)) == recomputed(m, exclude_dims=("ch",))
 
-    def test_a_chunk_axis_that_stops_being_linear(self):
+    def test_a_stream_axis_that_stops_being_linear(self):
         """An irregular-rate stream swaps its TimeAxis for a CoordinateAxis. The
         specialised validator reads ``.gain`` directly and must not raise."""
         probe = Probe()
@@ -146,7 +146,7 @@ class TestTheBugsTheFuzzFound:
                 "ch": hoisted,
             },
             key="dev",
-            chunk_dim="time",
+            stream_dim="time",
         )
         assert probe._message_hash(irregular) == recomputed(irregular)
 
@@ -164,14 +164,14 @@ class TestTheBugsTheFuzzFound:
                 "feat": AxisArray.LinearAxis(gain=2.0, offset=0.0),
             },
             key="dev",
-            chunk_dim="time",
+            stream_dim="time",
         )
         without = AxisArray(
             np.zeros((8, 2, 2), np.float32),
             dims=["time", "ch", "feat"],
             axes={"time": AxisArray.TimeAxis(fs=100.0), "ch": hoisted},
             key="dev",
-            chunk_dim="time",
+            stream_dim="time",
         )
         kwargs = {"exclude_dims": ("feat",)}
         probe._hash = probe._message_hash(with_axis, **kwargs)
@@ -220,16 +220,16 @@ def test_fuzz_the_fast_path_never_disagrees(seed: int):
     rng = random.Random(seed)
     labels_pool = [["a", "b", "c"], ["x", "y", "z"], ["a", "b", "c", "d"], ["a", "b"]]
 
-    def build(dims, chunk, labels, fs, key, n_chunk, offset, coord_time):
+    def build(dims, stream, labels, fs, key, n_stream, offset, coord_time):
         shape, axes = [], {}
         for dim in dims:
             if dim == "ch":
                 shape.append(len(labels))
                 axes["ch"] = CoordinateAxis(data=np.array(labels), dims=["ch"])
             elif dim in ("time", "win"):
-                shape.append(n_chunk)
+                shape.append(n_stream)
                 axes[dim] = (
-                    CoordinateAxis(data=np.arange(n_chunk).astype(float), dims=[dim], unit="s")
+                    CoordinateAxis(data=np.arange(n_stream).astype(float), dims=[dim], unit="s")
                     if coord_time
                     else AxisArray.TimeAxis(fs=fs, offset=offset)
                 )
@@ -240,13 +240,13 @@ def test_fuzz_the_fast_path_never_disagrees(seed: int):
                     axes[dim] = CoordinateAxis(data=np.array([f"{dim}0", f"{dim}1"]), dims=[dim])
                 elif roll < 0.7:
                     axes[dim] = AxisArray.LinearAxis(gain=rng.choice([1.0, 2.0]), offset=rng.choice([0.0, 5.0]))
-        extra = {"chunk_dim": chunk} if chunk in dims else {}
+        extra = {"stream_dim": stream} if stream in dims else {}
         return AxisArray(np.zeros(shape, np.float32), dims=list(dims), axes=axes, key=key, **extra)
 
     checked = 0
     for _ in range(120):
         probe = Probe()
-        dims, chunk = rng.choice(DIMSETS)
+        dims, stream = rng.choice(DIMSETS)
         kwargs = rng.choice(CALL_KWARGS)
         labels, fs, key = rng.choice(labels_pool), rng.choice([100.0, 200.0]), rng.choice(["dev", "dev2"])
         hoisted = CoordinateAxis(data=np.array(labels), dims=["ch"])
@@ -260,12 +260,12 @@ def test_fuzz_the_fast_path_never_disagrees(seed: int):
             elif roll < 0.32:
                 key = rng.choice(["dev", "dev2"])
             elif roll < 0.38:
-                dims, chunk = rng.choice(DIMSETS)
+                dims, stream = rng.choice(DIMSETS)
             elif roll < 0.44:
                 kwargs = rng.choice(CALL_KWARGS)
             elif roll < 0.48:
                 probe.state = {}  # a stateful_op restore mid-stream
-            message = build(dims, chunk, labels, fs, key, rng.choice([8, 13, 21]), step * 0.1, rng.random() < 0.15)
+            message = build(dims, stream, labels, fs, key, rng.choice([8, 13, 21]), step * 0.1, rng.random() < 0.15)
             # Half the time the producer hands back the same axis object.
             if "ch" in message.axes and rng.random() < 0.5:
                 if len(labels) == message.data.shape[message.dims.index("ch")]:
@@ -273,7 +273,7 @@ def test_fuzz_the_fast_path_never_disagrees(seed: int):
             got = probe._message_hash(message, **kwargs)
             assert got == recomputed(
                 message, **kwargs
-            ), f"stale hash: dims={message.dims} chunk_dim={message.chunk_dim} kwargs={kwargs}"
+            ), f"stale hash: dims={message.dims} stream_dim={message.stream_dim} kwargs={kwargs}"
             probe._hash = got
             checked += 1
     assert checked == 120 * 14
