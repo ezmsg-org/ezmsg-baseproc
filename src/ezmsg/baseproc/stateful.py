@@ -14,8 +14,8 @@ from .processor import (
 )
 from .protocols import MessageInType, MessageOutType, SettingsType, StateType
 from .util.asio import run_coroutine_sync
-from .util.chunkdim import STREAMING_DIMS as _STREAMING_DIMS
 from .util.message import is_sample_message
+from .util.streamdim import STREAMING_DIMS as _STREAMING_DIMS
 from .util.typeresolution import resolve_typevar
 
 
@@ -32,7 +32,7 @@ def _shape_slice(dims: list[str], exclude: tuple[str, ...]) -> slice | None:
     """A slice selecting the dimensions whose *length* feeds the hash.
 
     Only worth having when the excluded dimensions sit at one end, which is the
-    case for every layout in practice -- the chunk dimension leads (``time, ch``;
+    case for every layout in practice -- the stream dimension leads (``time, ch``;
     ``win, time, ch``) or, after a transpose, trails. Anything else returns
     ``None`` and simply declines the fast path rather than paying a comprehension
     per message to reproduce ``shape``.
@@ -92,16 +92,16 @@ def _build_witness(
     # a process boundary, where unpickling hands out a new object per message but
     # the fingerprint rides along already computed.
     kept = tuple((dim, axes.get(dim), _axis_value(axes.get(dim))) for dim in dims if dim not in exclude)
-    # The chunk axis is a new object every message on any path -- its offset
+    # The stream axis is a new object every message on any path -- its offset
     # advances -- so it is compared by value always.
-    chunked = tuple((dim, getattr(axes.get(dim), "gain", None)) for dim in dims if dim in exclude)
-    w_dims, w_key, w_chunk = list(dims), message.key, message.chunk_dim
+    streamed = tuple((dim, getattr(axes.get(dim), "gain", None)) for dim in dims if dim in exclude)
+    w_dims, w_key, w_stream = list(dims), message.key, message.stream_dim
 
-    if len(kept) == 1 and len(chunked) == 1 and chunked[0][1] is not None and kept[0][2] is not None:
-        # One coordinate axis to pin down and one chunk axis carrying the sample
+    if len(kept) == 1 and len(streamed) == 1 and streamed[0][1] is not None and kept[0][2] is not None:
+        # One coordinate axis to pin down and one stream axis carrying the sample
         # rate. This is `(time, ch)`, and `(win, time, ch)` once `time` is also
         # excluded -- between them, nearly every message in a graph.
-        (kept_dim, kept_axis, kept_value), (chunk_dim, chunk_gain) = kept[0], chunked[0]
+        (kept_dim, kept_axis, kept_value), (stream_dim, stream_gain) = kept[0], streamed[0]
         kept_ix = dims.index(kept_dim)
 
         def validate(
@@ -109,13 +109,13 @@ def _build_witness(
             _kd: str = kept_dim,
             _ka: typing.Any = kept_axis,
             _kv: typing.Any = kept_value,
-            _cd: str = chunk_dim,
-            _cg: float = chunk_gain,
+            _sd: str = stream_dim,
+            _sg: float = stream_gain,
             _kix: int = kept_ix,
             _klen: int = shape[kept_ix],
             _dims: list[str] = w_dims,
             _key: str = w_key,
-            _chunk: str | None = w_chunk,
+            _stream: str | None = w_stream,
             _check_key: bool = include_key,
         ) -> bool:
             axes = msg.axes
@@ -124,14 +124,14 @@ def _build_witness(
                 if axis is not _ka and _axis_value(axis) != _kv:
                     return False
                 return (
-                    axes[_cd].gain == _cg
+                    axes[_sd].gain == _sg
                     and msg.data.shape[_kix] == _klen
-                    and msg.chunk_dim == _chunk
+                    and msg.stream_dim == _stream
                     and msg.dims == _dims
                     and (not _check_key or msg.key == _key)
                 )
             except (AttributeError, KeyError, IndexError):
-                # The layout shifted out from under the specialisation: the chunk
+                # The layout shifted out from under the specialisation: the stream
                 # axis stopped being linear (an irregular-rate stream switches to
                 # a CoordinateAxis), a dimension lost its axis, or the data lost a
                 # dimension. Decline and let the full hash sort it out. Costs
@@ -143,12 +143,12 @@ def _build_witness(
         def validate(
             msg: typing.Any,
             _kept: tuple = kept,
-            _chunked: tuple = chunked,
+            _streamed: tuple = streamed,
             _sl: slice = sl,
             _ks: tuple = shape[sl],
             _dims: list[str] = w_dims,
             _key: str = w_key,
-            _chunk: str | None = w_chunk,
+            _stream: str | None = w_stream,
             _check_key: bool = include_key,
         ) -> bool:
             axes = msg.axes
@@ -156,7 +156,7 @@ def _build_witness(
                 incoming = axes.get(dim)
                 if incoming is not axis and (value is None or _axis_value(incoming) != value):
                     return False
-            for dim, gain in _chunked:
+            for dim, gain in _streamed:
                 # No `is not None` shortcut on the axis: an excluded dimension
                 # *losing* its axis drops a term from the hash, so absence has to
                 # compare unequal to a gain rather than be skipped.
@@ -164,7 +164,7 @@ def _build_witness(
                     return False
             return (
                 msg.data.shape[_sl] == _ks
-                and msg.chunk_dim == _chunk
+                and msg.stream_dim == _stream
                 and msg.dims == _dims
                 and (not _check_key or msg.key == _key)
             )
@@ -186,7 +186,7 @@ class Stateful(ABC, typing.Generic[StateType]):
     Recomputing the hash means walking the dims, reaching into the axes and
     building a tuple to hash -- and in a steady stream the answer is the same
     every time. A producer that builds its per-stream axes once and replaces only
-    the chunk axis per message (the template idiom every ezmsg source uses) hands
+    the stream axis per message (the template idiom every ezmsg source uses) hands
     every consumer the *same coordinate axis object* for the life of the stream,
     so identity is enough to prove the hash cannot have changed.
 
@@ -195,14 +195,14 @@ class Stateful(ABC, typing.Generic[StateType]):
     """
 
     STREAMING_DIMS: typing.ClassVar[tuple[str, ...]] = _STREAMING_DIMS
-    """Fallback chunk dimension for messages that do not declare one.
+    """Fallback stream dimension for messages that do not declare one.
 
-    Consulted only when :attr:`~ezmsg.util.messages.axisarray.AxisArray.chunk_dim`
+    Consulted only when :attr:`~ezmsg.util.messages.axisarray.AxisArray.stream_dim`
     is ``None``. ``("time",)`` is right for a raw signal and wrong downstream of
     a windowing stage, where the message is ``(win, time, ch)`` and ``win`` is
     what grows; such a processor sets ``("win",)``.
 
-    Prefer teaching the producer to declare ``chunk_dim``. That puts the answer
+    Prefer teaching the producer to declare ``stream_dim``. That puts the answer
     in the one place that knows it, rather than asking each consumer to guess
     about a message it did not create.
     """
@@ -231,10 +231,10 @@ class Stateful(ABC, typing.Generic[StateType]):
         """
         Check if the message metadata indicates a need for state reset.
 
-        For a message that declares :attr:`~ezmsg.util.messages.axisarray.AxisArray.chunk_dim`,
+        For a message that declares :attr:`~ezmsg.util.messages.axisarray.AxisArray.stream_dim`,
         the default keys on everything describing the stream's *shape and
-        identity* but not its per-chunk extent: the message key, its dims, the
-        length of every dimension except the one it is a chunk along, the
+        identity* but not its per-message extent: the message key, its dims, the
+        length of every dimension except the one it streams along, the
         coordinate values on those dimensions, and the gain and offset of any
         linear axis among them. See :meth:`_message_hash`.
 
@@ -272,13 +272,13 @@ class Stateful(ABC, typing.Generic[StateType]):
         Folds in, in dimension order:
 
         * ``message.key`` (unless *include_key* is False) and ``message.dims``
-        * for each dimension other than the chunk dimension: its length, plus
+        * for each dimension other than the stream dimension: its length, plus
           either the coordinate axis's
           :attr:`~ezmsg.util.messages.axisarray.CoordinateAxis.fingerprint` or a
           linear axis's ``gain`` **and** ``offset``
-        * for the chunk dimension: only the ``gain``
+        * for the stream dimension: only the ``gain``
 
-        ``offset`` is dropped for the chunk dimension alone, where it simply
+        ``offset`` is dropped for the stream dimension alone, where it simply
         counts off elapsed samples. Everywhere else it locates the axis and a
         change in it is a configuration change: a spectrum whose ``freq`` axis
         moves from 5-25 Hz to 70-90 Hz keeps the same gain and the same length,
@@ -289,7 +289,7 @@ class Stateful(ABC, typing.Generic[StateType]):
         channels that are no longer there, and the first samples of the new ones
         come out dominated by the old ones' history.
 
-        The chunk dimension is ``message.chunk_dim`` when declared, else
+        The stream dimension is ``message.stream_dim`` when declared, else
         :attr:`STREAMING_DIMS`. Naming a dimension the message does not have is
         harmless -- nothing matches, so nothing is excluded.
 
@@ -297,7 +297,7 @@ class Stateful(ABC, typing.Generic[StateType]):
         reset-once-then-never behaviour those processors had before.
 
         :param exclude_dims: Further dimensions to leave out, *in addition to*
-            the chunk dimension. Use for a processor whose state genuinely does
+            the stream dimension. Use for a processor whose state genuinely does
             not depend on a dimension's identity.
         :param include_key: Set False for a processor whose state depends only
             on shape, so that switching streams does not force a reset.
@@ -323,13 +323,13 @@ class Stateful(ABC, typing.Generic[StateType]):
 
         # The producer renamed the dims and so is the only party that reliably
         # knows which one grows; fall back to the class default when it is silent.
-        chunk_dim = message.chunk_dim
-        if chunk_dim is None:
+        stream_dim = message.stream_dim
+        if stream_dim is None:
             exclude = self.STREAMING_DIMS if exclude_dims is None else (*self.STREAMING_DIMS, *exclude_dims)
         elif exclude_dims is None:
-            exclude = (chunk_dim,)
+            exclude = (stream_dim,)
         else:
-            exclude = (chunk_dim, *exclude_dims)
+            exclude = (stream_dim, *exclude_dims)
 
         # Hoisted out of the loop: this runs on every message of every stream,
         # so the repeated attribute lookups are worth removing. A tuple rather

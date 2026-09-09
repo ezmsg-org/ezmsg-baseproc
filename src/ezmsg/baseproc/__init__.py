@@ -99,13 +99,6 @@ from .units import (
     get_base_transformer_type,
 )
 from .util.asio import CoroutineExecutionError, SyncToAsyncGeneratorWrapper, run_coroutine_sync
-from .util.chunkdim import (
-    STREAMING_DIMS,
-    resolve_chunk_dim,
-    resolve_configured_chunk_dim,
-    resolve_feature_dim,
-    resolve_transform_dim,
-)
 from .util.deprecation import (
     DEFAULT_REMOVAL,
     suppress_axis_deprecation,
@@ -128,6 +121,13 @@ from .util.pipeline_settings import (
     sanitize_settings_value,
 )
 from .util.profile import profile_method, profile_subpub
+from .util.streamdim import (
+    STREAMING_DIMS,
+    resolve_configured_stream_dim,
+    resolve_feature_dim,
+    resolve_stream_dim,
+    resolve_transform_dim,
+)
 from .util.typeresolution import check_message_type_compatibility, resolve_typevar
 
 __all__ = [
@@ -202,9 +202,9 @@ __all__ = [
     "SampleMessage",
     "SampleTriggerMessage",
     "is_sample_message",
-    "resolve_chunk_dim",
-    "resolve_configured_chunk_dim",
+    "resolve_configured_stream_dim",
     "resolve_feature_dim",
+    "resolve_stream_dim",
     "resolve_transform_dim",
     "suppress_axis_deprecation",
     "warn_axis_deprecated",

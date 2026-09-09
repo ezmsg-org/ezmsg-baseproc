@@ -1270,7 +1270,7 @@ class TestMessageHashDefault:
                 "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
             },
             key=key,
-            chunk_dim="time",
+            stream_dim="time",
         )
 
     @staticmethod
@@ -1286,7 +1286,7 @@ class TestMessageHashDefault:
                 "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
             },
             key="dev",
-            chunk_dim="win",
+            stream_dim="win",
         )
 
     def _resets(self, proc, messages):
@@ -1338,10 +1338,10 @@ class TestMessageHashDefault:
         msgs = [self._msg(5, ["c0", "c1"], coord_time=True) for _ in range(3)]
         assert self._resets(proc, msgs) == [0]
 
-    def test_chunk_dim_names_the_dimension_that_grows(self):
+    def test_stream_dim_names_the_dimension_that_grows(self):
         """Downstream of a windowing stage, `win` grows and `time` is fixed.
 
-        A consumer cannot infer this -- `time` is the chunk dimension on a raw
+        A consumer cannot infer this -- `time` is the stream dimension on a raw
         signal and a fixed within-window axis here -- so the producer declares
         it and the consumer needs to know nothing.
         """
@@ -1437,15 +1437,15 @@ class TestMessageHashDefault:
                     "ch": AxisArray.CoordinateAxis(data=np.array(["c0", "c1"]), dims=["ch"]),
                 },
                 key="dev",
-                chunk_dim="time",
+                stream_dim="time",
             )
 
         proc = self.Probe()
         assert proc._hash_message(spectrum(5.0)) != proc._hash_message(spectrum(70.0))
         assert proc._hash_message(spectrum(5.0)) == proc._hash_message(spectrum(5.0))
 
-    def test_exclude_dims_is_additive_to_the_chunk_dim(self):
-        """Naming a dimension to ignore must not un-exclude the chunk dim."""
+    def test_exclude_dims_is_additive_to_the_stream_dim(self):
+        """Naming a dimension to ignore must not un-exclude the stream dim."""
         import numpy as np
 
         def msg(n_time, labels):
@@ -1457,7 +1457,7 @@ class TestMessageHashDefault:
                     "ch": AxisArray.CoordinateAxis(data=np.array(labels), dims=["ch"]),
                 },
                 key="dev",
-                chunk_dim="time",
+                stream_dim="time",
             )
 
         proc = self.Probe()
