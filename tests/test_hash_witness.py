@@ -196,6 +196,70 @@ class TestTheWitnessIsDroppedWhenItMustBe:
         assert probe._message_hash(m) == recomputed(m)
 
 
+def msg3(feat_axis: CoordinateAxis | None, offset: float = 0.0) -> AxisArray:
+    """A `(time, ch, feat)` message, which takes the generic validator."""
+    axes = {
+        "time": AxisArray.TimeAxis(fs=100.0, offset=offset),
+        "ch": CoordinateAxis(data=np.array(["a", "b"]), dims=["ch"]),
+    }
+    if feat_axis is not None:
+        axes["feat"] = feat_axis
+    return AxisArray(np.zeros((4, 2, 3), np.float32), dims=["time", "ch", "feat"], axes=axes, stream_dim="time")
+
+
+def feat() -> CoordinateAxis:
+    return CoordinateAxis(data=np.array(["x", "y", "z"]), dims=["feat"])
+
+
+class TestTheWitnessHoldsNothing:
+    """The witness must not keep a message's axes alive. Across a process
+    boundary their data are zero-copy views into the channel's shared memory,
+    and a pinned view stops the channel from releasing it (ezmsg#272)."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: msg(["a", "b"]), id="specialised"),
+            pytest.param(lambda: msg3(feat()), id="generic"),
+        ],
+    )
+    def test_the_first_messages_axes_are_released(self, build):
+        import gc
+        import weakref
+
+        probe = Probe()
+        m = build()
+        refs = [weakref.ref(ax) for dim, ax in m.axes.items() if dim != "time"]
+        probe._hash = probe._message_hash(m)
+        assert probe._hash_witness is not None
+        del m
+        gc.collect()
+        assert all(r() is None for r in refs)
+
+    def test_after_the_axis_dies_equal_content_still_hits(self):
+        probe = Probe()
+        probe._hash = first = probe._message_hash(msg(["a", "b"]))
+        gc_collect()
+        m = msg(["a", "b"], offset=0.5)
+        assert probe._hash_witness[0](m)  # answered by value, not by a reset
+        assert probe._message_hash(m) == recomputed(m) == first
+
+    def test_after_the_axis_dies_losing_it_is_not_masked(self):
+        """A dead reference answers None, like a missing axis does; the two must
+        not be mistaken for a match."""
+        probe = Probe()
+        probe._hash = first = probe._message_hash(msg3(feat()))
+        gc_collect()
+        m = msg3(None, offset=0.5)
+        assert probe._message_hash(m) == recomputed(m) != first
+
+
+def gc_collect() -> None:
+    import gc
+
+    gc.collect()
+
+
 DIMSETS = [
     (["time", "ch"], "time"),
     (["win", "time", "ch"], "win"),
