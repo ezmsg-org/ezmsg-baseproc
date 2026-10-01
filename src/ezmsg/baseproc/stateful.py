@@ -3,6 +3,7 @@
 import pickle
 import typing
 import warnings
+import weakref
 from abc import ABC, abstractmethod
 
 from ezmsg.util.messages.axisarray import AxisArray
@@ -61,6 +62,24 @@ def _axis_value(axis: typing.Any) -> typing.Any:
     return None if gain is None else (gain, axis.offset)
 
 
+def _dead_ref() -> None:
+    return None
+
+
+def _weak(axis: typing.Any) -> typing.Callable[[], typing.Any] | None:
+    """A weak reference to *axis*; None for a dimension with no axis.
+
+    An axis type that cannot be weakly referenced gets a reference that is
+    always dead, so it is compared by value every time -- never held strongly.
+    """
+    if axis is None:
+        return None
+    try:
+        return weakref.ref(axis)
+    except TypeError:
+        return _dead_ref
+
+
 def _build_witness(
     message: typing.Any,
     dims: list[str],
@@ -91,7 +110,14 @@ def _build_witness(
     # the axis *value*, for when it cannot -- most importantly on the far side of
     # a process boundary, where unpickling hands out a new object per message but
     # the fingerprint rides along already computed.
-    kept = tuple((dim, axes.get(dim), _axis_value(axes.get(dim))) for dim in dims if dim not in exclude)
+    #
+    # The object is held by weak reference. A strong one would keep the first
+    # message's axes alive for as long as the hash holds, and on the far side of
+    # a process boundary their data are zero-copy views into the channel's
+    # shared memory: pinning them stops the channel from releasing that memory
+    # when the publisher grows it (ezmsg-org/ezmsg#272). A reference that has
+    # died answers None and the check falls through to the value.
+    kept = tuple((dim, _weak(axes.get(dim)), _axis_value(axes.get(dim))) for dim in dims if dim not in exclude)
     # The stream axis is a new object every message on any path -- its offset
     # advances -- so it is compared by value always.
     streamed = tuple((dim, getattr(axes.get(dim), "gain", None)) for dim in dims if dim in exclude)
@@ -107,7 +133,7 @@ def _build_witness(
         def validate(
             msg: typing.Any,
             _kd: str = kept_dim,
-            _ka: typing.Any = kept_axis,
+            _ka: typing.Callable[[], typing.Any] = kept_axis,
             _kv: typing.Any = kept_value,
             _sd: str = stream_dim,
             _sg: float = stream_gain,
@@ -121,7 +147,8 @@ def _build_witness(
             axes = msg.axes
             try:
                 axis = axes[_kd]
-                if axis is not _ka and _axis_value(axis) != _kv:
+                # `axis is None` guards a dead reference, which also answers None.
+                if (axis is None or axis is not _ka()) and _axis_value(axis) != _kv:
                     return False
                 return (
                     axes[_sd].gain == _sg
@@ -152,9 +179,13 @@ def _build_witness(
             _check_key: bool = include_key,
         ) -> bool:
             axes = msg.axes
-            for dim, axis, value in _kept:
+            for dim, ref, value in _kept:
                 incoming = axes.get(dim)
-                if incoming is not axis and (value is None or _axis_value(incoming) != value):
+                if ref is None:
+                    # The dimension had no axis; it matches only while it still has none.
+                    if incoming is not None:
+                        return False
+                elif (incoming is None or incoming is not ref()) and (value is None or _axis_value(incoming) != value):
                     return False
             for dim, gain in _streamed:
                 # No `is not None` shortcut on the axis: an excluded dimension
