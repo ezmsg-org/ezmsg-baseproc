@@ -107,16 +107,24 @@ def _build_witness(
     axes = message.axes
     # Each kept dimension is recorded twice: the axis *object*, which settles it
     # in one pointer comparison when the producer reuses its per-stream axes, and
-    # the axis *value*, for when it cannot -- most importantly on the far side of
-    # a process boundary, where unpickling hands out a new object per message but
-    # the fingerprint rides along already computed.
+    # the axis *value* (fingerprint, or gain and offset), for when it cannot.
+    #
+    # Across a process boundary the pointer comparison usually still works:
+    # ezmsg's transport sends a coordinate axis the receiving channel already
+    # holds as a reference, and the channel hands every message the same axis
+    # object. The value is the fallback for when it does not -- elision is off
+    # (an older peer, EZMSG_DISABLE_AXIS_ELISION), or the axis has no
+    # fingerprint -- and then each message unpickles into a new object, with
+    # the fingerprint already computed (ezmsg computes it when pickling).
     #
     # The object is held by weak reference. A strong one would keep the first
-    # message's axes alive for as long as the hash holds, and on the far side of
-    # a process boundary their data are zero-copy views into the channel's
-    # shared memory: pinning them stops the channel from releasing that memory
-    # when the publisher grows it (ezmsg-org/ezmsg#272). A reference that has
-    # died answers None and the check falls through to the value.
+    # message's axes alive for as long as the hash holds, and when elision is
+    # off their data are zero-copy views into the channel's shared memory:
+    # pinning them keeps a grown-out segment mapped (and before ezmsg 3.10.0b5
+    # killed the channel, ezmsg-org/ezmsg#272). A reference that has died
+    # answers None and the check falls through to the value. With elision on,
+    # the channel keeps the shared axis alive, so the reference stays live and
+    # the pointer comparison keeps hitting.
     kept = tuple((dim, _weak(axes.get(dim)), _axis_value(axes.get(dim))) for dim in dims if dim not in exclude)
     # The stream axis is a new object every message on any path -- its offset
     # advances -- so it is compared by value always.
@@ -219,7 +227,9 @@ class Stateful(ABC, typing.Generic[StateType]):
     every time. A producer that builds its per-stream axes once and replaces only
     the stream axis per message (the template idiom every ezmsg source uses) hands
     every consumer the *same coordinate axis object* for the life of the stream,
-    so identity is enough to prove the hash cannot have changed.
+    so identity is enough to prove the hash cannot have changed. Since ezmsg
+    3.10.0b5 that usually holds across a process boundary too: the receiving
+    channel substitutes one shared object for a coordinate axis it already holds.
 
     Shadowed by an instance attribute once set. ``None`` means "no witness" and
     is the safe state: it costs a full recomputation, never a wrong answer.
