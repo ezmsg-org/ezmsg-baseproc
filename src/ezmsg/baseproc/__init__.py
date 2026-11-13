@@ -121,6 +121,7 @@ from .util.pipeline_settings import (
     sanitize_settings_value,
 )
 from .util.profile import profile_method, profile_subpub
+from .util.segment import SegmentTracker, find_gaps
 from .util.streamdim import (
     STREAMING_DIMS,
     resolve_configured_stream_dim,
@@ -201,6 +202,8 @@ __all__ = [
     "STREAMING_DIMS",
     "SampleMessage",
     "SampleTriggerMessage",
+    "SegmentTracker",
+    "find_gaps",
     "is_sample_message",
     "resolve_configured_stream_dim",
     "resolve_feature_dim",
