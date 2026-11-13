@@ -443,6 +443,7 @@ class BaseStatefulProcessor(
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._hash = -1
+        self._segment: int | None = None
         state_type = self.__class__.get_state_type()
         self._state: StateType = state_type()
         # TODO: Enforce that StateType has .hash: int field.
@@ -473,21 +474,57 @@ class BaseStatefulProcessor(
         """
         return self._reset_state(message)
 
+    def _reset_segment(self, message: typing.Any) -> None:
+        """
+        Start again because ``message`` does not continue the previous one.
+
+        Called when :attr:`~ezmsg.util.messages.axisarray.AxisArray.segment` differs from the
+        previous message's while the layout (`_hash_message`) is unchanged: the source reported
+        a gap in time, or a reconfiguration this processor cannot otherwise see. Anything carried
+        over from before the break -- filter memory, a partly filled window -- no longer describes
+        the samples that precede this message.
+
+        The default is a full `_reset_state`. Override it to keep state that is still valid
+        across a break, such as long-run statistics or a tracked frequency, and drop the rest.
+        """
+        self._reset_state(message)
+
+    async def _areset_segment(self, message: typing.Any) -> None:
+        """Async variant of `_reset_segment`. A `_reset_segment` override is honoured here too."""
+        if type(self)._reset_segment is not BaseStatefulProcessor._reset_segment:
+            return self._reset_segment(message)
+        await self._areset_state(message)
+
+    def _prepare_state(self, message: typing.Any) -> None:
+        """Reset before processing ``message`` if its layout or its segment changed."""
+        msg_hash = self._hash_message(message)
+        segment = getattr(message, "segment", None)
+        if msg_hash != self._hash:
+            self._reset_state(message)
+            self._hash = msg_hash
+        elif segment != self._segment:
+            self._reset_segment(message)
+        self._segment = segment
+
+    async def _aprepare_state(self, message: typing.Any) -> None:
+        msg_hash = self._hash_message(message)
+        segment = getattr(message, "segment", None)
+        if msg_hash != self._hash:
+            await self._areset_state(message)
+            self._hash = msg_hash
+        elif segment != self._segment:
+            await self._areset_segment(message)
+        self._segment = segment
+
     @abstractmethod
     def _process(self, message: typing.Any) -> typing.Any: ...
 
     def __call__(self, message: typing.Any) -> typing.Any:
-        msg_hash = self._hash_message(message)
-        if msg_hash != self._hash:
-            self._reset_state(message)
-            self._hash = msg_hash
+        self._prepare_state(message)
         return self._process(message)
 
     async def __acall__(self, message: typing.Any) -> typing.Any:
-        msg_hash = self._hash_message(message)
-        if msg_hash != self._hash:
-            await self._areset_state(message)
-            self._hash = msg_hash
+        await self._aprepare_state(message)
         return await self._aprocess(message)
 
     def stateful_op(
@@ -670,19 +707,13 @@ class BaseAdaptiveTransformer(
 
     def partial_fit_transform(self, message: AxisArray) -> MessageOutType:
         """Train on the message, then run inference and return the result."""
-        msg_hash = self._hash_message(message)
-        if msg_hash != self._hash:
-            self._reset_state(message)
-            self._hash = msg_hash
+        self._prepare_state(message)
         self.partial_fit(message)
         return self._process(message)
 
     async def apartial_fit_transform(self, message: AxisArray) -> MessageOutType:
         """Async variant of partial_fit_transform."""
-        msg_hash = self._hash_message(message)
-        if msg_hash != self._hash:
-            await self._areset_state(message)
-            self._hash = msg_hash
+        await self._aprepare_state(message)
         await self.apartial_fit(message)
         return await self._aprocess(message)
 
@@ -711,8 +742,5 @@ class BaseAsyncTransformer(
     async def __acall__(self, message: MessageInType) -> MessageOutType:
         # Note: In Python 3.12, we can invoke this with `await obj(message)`
         # Earlier versions must be explicit: `await obj.__acall__(message)`
-        msg_hash = self._hash_message(message)
-        if msg_hash != self._hash:
-            await self._areset_state(message)
-            self._hash = msg_hash
+        await self._aprepare_state(message)
         return await self._aprocess(message)
