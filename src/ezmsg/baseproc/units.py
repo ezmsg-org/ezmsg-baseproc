@@ -47,6 +47,10 @@ def get_base_clockdriven_producer_type(cls: type) -> type:
     return resolve_typevar(cls, ClockDrivenProducerType)
 
 
+# Stands in for the segment of the previous message before there has been one.
+_NO_MESSAGE = object()
+
+
 def _close_previous(prev: typing.Any) -> None:
     """Close the previous producer/processor instance before it's replaced.
 
@@ -232,6 +236,10 @@ class BaseTransformerUnit(
     INPUT_SIGNAL = ez.InputStream(MessageInType)
     OUTPUT_SIGNAL = ez.OutputStream(MessageOutType)
 
+    # Segment and config_id of the previous INPUT_SIGNAL message; a change triggers `processor.aflush()`.
+    _segment: typing.Any = _NO_MESSAGE
+    _config_id: int = 0
+
     def create_processor(self):
         # self.processor: TransformerType[SettingsType, MessageInType, MessageOutType, StateType]
         """Create the transformer instance from settings."""
@@ -243,6 +251,16 @@ class BaseTransformerUnit(
     @ez.publisher(OUTPUT_SIGNAL)
     @profile_subpub(trace_oldest=False)
     async def on_signal(self, message: MessageInType) -> typing.AsyncGenerator:
+        segment = getattr(message, "segment", None)
+        config_id = getattr(message, "config_id", 0)
+        if segment != self._segment or config_id != self._config_id:
+            # Release what the processor holds before a new segment or configuration resets it.
+            if self._segment is not _NO_MESSAGE:
+                tail = await self.processor.aflush()
+                if tail is not None:
+                    yield self.OUTPUT_SIGNAL, tail
+            self._segment = segment
+            self._config_id = config_id
         result = await self.processor.__acall__(message)
         if result is not None:  # and math.prod(result.data.shape) > 0:
             yield self.OUTPUT_SIGNAL, result
@@ -258,6 +276,10 @@ class BaseAdaptiveTransformerUnit(
     OUTPUT_SIGNAL = ez.OutputStream(MessageOutType)
     OUTPUT_SAMPLE = ez.OutputStream(MessageOutType)
 
+    # Segment and config_id of the previous INPUT_SIGNAL message; a change triggers `processor.aflush()`.
+    _segment: typing.Any = _NO_MESSAGE
+    _config_id: int = 0
+
     def create_processor(self) -> None:
         # self.processor: AdaptiveTransformerType[SettingsType, MessageInType, MessageOutType, StateType]
         """Create the adaptive transformer instance from settings."""
@@ -269,6 +291,16 @@ class BaseAdaptiveTransformerUnit(
     @ez.publisher(OUTPUT_SIGNAL)
     @profile_subpub(trace_oldest=False)
     async def on_signal(self, message: MessageInType) -> typing.AsyncGenerator:
+        segment = getattr(message, "segment", None)
+        config_id = getattr(message, "config_id", 0)
+        if segment != self._segment or config_id != self._config_id:
+            # Release what the processor holds before a new segment or configuration resets it.
+            if self._segment is not _NO_MESSAGE:
+                tail = await self.processor.aflush()
+                if tail is not None:
+                    yield self.OUTPUT_SIGNAL, tail
+            self._segment = segment
+            self._config_id = config_id
         result = await self.processor.__acall__(message)
         if result is not None:  # and math.prod(result.data.shape) > 0:
             yield self.OUTPUT_SIGNAL, result
