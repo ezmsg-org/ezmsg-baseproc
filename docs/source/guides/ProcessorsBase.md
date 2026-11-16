@@ -126,7 +126,7 @@ flowchart TD
 4. Implement the child class.
     * The minimum implementation is `_process` for sync processors, `_aprocess` for async processors, and `_produce` for producers.
     * For any stateful processor, implement `_reset_state`.
-    * For stateful processors that need to respond to a change in the incoming data, implement `_hash_message`.
+    * Stateful processors reset on every change of the incoming `config_id` (or, for undeclared streams, of the layout hash). Override `_hash_message` only to narrow that, i.e. to ignore changes the state does not depend on.
     * For adaptive transformers, implement `partial_fit`.
     * For chains of processors (`CompositeProcessor`/ `CompositeProducer`), need to implement `_initialize_processors`.
     * For clock-driven producers (`BaseClockDrivenProducer`), implement `_reset_state(time_axis)` and `_produce(n_samples, time_axis)`. See the [clock-driven how-to guide](how-tos/processors/clockdriven.rst).

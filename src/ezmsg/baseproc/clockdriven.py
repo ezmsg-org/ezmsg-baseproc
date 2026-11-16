@@ -88,11 +88,6 @@ class BaseClockDrivenProducer(
                 return AxisArray(data=data, dims=["time"], axes={"time": time_axis})
     """
 
-    def _hash_message(self, message: AxisArray.LinearAxis) -> int:
-        # Return constant hash - state should not reset based on clock rate changes.
-        # The producer maintains continuity regardless of clock rate changes.
-        return 0
-
     def _compute_samples_and_offset(self, clock_tick: AxisArray.LinearAxis) -> tuple[int, float] | None:
         """
         Compute number of samples and time offset from a clock tick.

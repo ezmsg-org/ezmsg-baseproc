@@ -1,12 +1,12 @@
 """Stateful processor base classes for ezmsg."""
 
+import logging
 import pickle
 import typing
 import warnings
-import weakref
 from abc import ABC, abstractmethod
 
-from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray, chain_config_id, replace
 
 from .processor import (
     BaseProcessor,
@@ -19,6 +19,13 @@ from .util.message import is_sample_message
 from .util.streamdim import STREAMING_DIMS as _STREAMING_DIMS
 from .util.typeresolution import resolve_typevar
 
+logger = logging.getLogger(__name__)
+
+# Processor classes already warned about receiving AxisArrays without a config_id.
+_warned_undeclared: set[type] = set()
+# Processor classes already warned about changing their output layout without a new config_id.
+_warned_unannounced: set[type] = set()
+
 
 def _get_base_processor_state_type(cls: type) -> type:
     try:
@@ -29,188 +36,6 @@ def _get_base_processor_state_type(cls: type) -> type:
         ) from e
 
 
-def _shape_slice(dims: list[str], exclude: tuple[str, ...]) -> slice | None:
-    """A slice selecting the dimensions whose *length* feeds the hash.
-
-    Only worth having when the excluded dimensions sit at one end, which is the
-    case for every layout in practice -- the stream dimension leads (``time, ch``;
-    ``win, time, ch``) or, after a transpose, trails. Anything else returns
-    ``None`` and simply declines the fast path rather than paying a comprehension
-    per message to reproduce ``shape``.
-    """
-    dropped = [ix for ix, dim in enumerate(dims) if dim in exclude]
-    if not dropped:
-        return slice(None)
-    if dropped == list(range(len(dropped))):
-        return slice(len(dropped), None)
-    if dropped == list(range(len(dims) - len(dropped), len(dims))):
-        return slice(None, -len(dropped))
-    return None
-
-
-def _axis_value(axis: typing.Any) -> typing.Any:
-    """What the hash reads off an axis, for comparing two distinct objects.
-
-    ``None`` means "nothing comparable" -- a dimension with no axis, or one whose
-    axis is neither coordinate nor linear. Callers treat that as a mismatch and
-    fall back to recomputing, which is the conservative direction.
-    """
-    fingerprint = getattr(axis, "fingerprint", None)
-    if fingerprint is not None:
-        return fingerprint
-    gain = getattr(axis, "gain", None)
-    return None if gain is None else (gain, axis.offset)
-
-
-def _dead_ref() -> None:
-    return None
-
-
-def _weak(axis: typing.Any) -> typing.Callable[[], typing.Any] | None:
-    """A weak reference to *axis*; None for a dimension with no axis.
-
-    An axis type that cannot be weakly referenced gets a reference that is
-    always dead, so it is compared by value every time -- never held strongly.
-    """
-    if axis is None:
-        return None
-    try:
-        return weakref.ref(axis)
-    except TypeError:
-        return _dead_ref
-
-
-def _build_witness(
-    message: typing.Any,
-    dims: list[str],
-    shape: tuple[int, ...],
-    exclude: tuple[str, ...],
-    exclude_dims: typing.Iterable[str] | None,
-    include_key: bool,
-    extra: typing.Iterable[typing.Any],
-    result: int,
-) -> tuple | None:
-    """Compile a validator for the message this hash was derived from.
-
-    The layout is fixed for the life of a witness, so the decisions that depend
-    on it -- which dimensions to skip, where the kept lengths sit, whether the
-    key matters -- are made once here and baked into a closure's defaults rather
-    than re-derived per message. Unpacking a witness tuple and branching on it
-    cost more than the comparisons it was guarding.
-
-    Returns ``None`` for layouts the fast path declines to handle; the caller
-    then simply always recomputes.
-    """
-    sl = _shape_slice(dims, exclude)
-    if sl is None:
-        return None
-    axes = message.axes
-    # Each kept dimension is recorded twice: the axis *object*, which settles it
-    # in one pointer comparison when the producer reuses its per-stream axes, and
-    # the axis *value* (fingerprint, or gain and offset), for when it cannot.
-    #
-    # Across a process boundary the pointer comparison usually still works:
-    # ezmsg's transport sends a coordinate axis the receiving channel already
-    # holds as a reference, and the channel hands every message the same axis
-    # object. The value is the fallback for when it does not -- elision is off
-    # (an older peer, EZMSG_DISABLE_AXIS_ELISION), or the axis has no
-    # fingerprint -- and then each message unpickles into a new object, with
-    # the fingerprint already computed (ezmsg computes it when pickling).
-    #
-    # The object is held by weak reference. A strong one would keep the first
-    # message's axes alive for as long as the hash holds, and when elision is
-    # off their data are zero-copy views into the channel's shared memory:
-    # pinning them keeps a grown-out segment mapped (and before ezmsg 3.10.0b5
-    # killed the channel, ezmsg-org/ezmsg#272). A reference that has died
-    # answers None and the check falls through to the value. With elision on,
-    # the channel keeps the shared axis alive, so the reference stays live and
-    # the pointer comparison keeps hitting.
-    kept = tuple((dim, _weak(axes.get(dim)), _axis_value(axes.get(dim))) for dim in dims if dim not in exclude)
-    # The stream axis is a new object every message on any path -- its offset
-    # advances -- so it is compared by value always.
-    streamed = tuple((dim, getattr(axes.get(dim), "gain", None)) for dim in dims if dim in exclude)
-    w_dims, w_key, w_stream = list(dims), message.key, message.stream_dim
-
-    if len(kept) == 1 and len(streamed) == 1 and streamed[0][1] is not None and kept[0][2] is not None:
-        # One coordinate axis to pin down and one stream axis carrying the sample
-        # rate. This is `(time, ch)`, and `(win, time, ch)` once `time` is also
-        # excluded -- between them, nearly every message in a graph.
-        (kept_dim, kept_axis, kept_value), (stream_dim, stream_gain) = kept[0], streamed[0]
-        kept_ix = dims.index(kept_dim)
-
-        def validate(
-            msg: typing.Any,
-            _kd: str = kept_dim,
-            _ka: typing.Callable[[], typing.Any] = kept_axis,
-            _kv: typing.Any = kept_value,
-            _sd: str = stream_dim,
-            _sg: float = stream_gain,
-            _kix: int = kept_ix,
-            _klen: int = shape[kept_ix],
-            _dims: list[str] = w_dims,
-            _key: str = w_key,
-            _stream: str | None = w_stream,
-            _check_key: bool = include_key,
-        ) -> bool:
-            axes = msg.axes
-            try:
-                axis = axes[_kd]
-                # `axis is None` guards a dead reference, which also answers None.
-                if (axis is None or axis is not _ka()) and _axis_value(axis) != _kv:
-                    return False
-                return (
-                    axes[_sd].gain == _sg
-                    and msg.data.shape[_kix] == _klen
-                    and msg.stream_dim == _stream
-                    and msg.dims == _dims
-                    and (not _check_key or msg.key == _key)
-                )
-            except (AttributeError, KeyError, IndexError):
-                # The layout shifted out from under the specialisation: the stream
-                # axis stopped being linear (an irregular-rate stream switches to
-                # a CoordinateAxis), a dimension lost its axis, or the data lost a
-                # dimension. Decline and let the full hash sort it out. Costs
-                # nothing while it does not fire, which is always in a steady
-                # stream, and `_build_witness` re-specialises on the next change.
-                return False
-    else:
-
-        def validate(
-            msg: typing.Any,
-            _kept: tuple = kept,
-            _streamed: tuple = streamed,
-            _sl: slice = sl,
-            _ks: tuple = shape[sl],
-            _dims: list[str] = w_dims,
-            _key: str = w_key,
-            _stream: str | None = w_stream,
-            _check_key: bool = include_key,
-        ) -> bool:
-            axes = msg.axes
-            for dim, ref, value in _kept:
-                incoming = axes.get(dim)
-                if ref is None:
-                    # The dimension had no axis; it matches only while it still has none.
-                    if incoming is not None:
-                        return False
-                elif (incoming is None or incoming is not ref()) and (value is None or _axis_value(incoming) != value):
-                    return False
-            for dim, gain in _streamed:
-                # No `is not None` shortcut on the axis: an excluded dimension
-                # *losing* its axis drops a term from the hash, so absence has to
-                # compare unequal to a gain rather than be skipped.
-                if getattr(axes.get(dim), "gain", None) != gain:
-                    return False
-            return (
-                msg.data.shape[_sl] == _ks
-                and msg.stream_dim == _stream
-                and msg.dims == _dims
-                and (not _check_key or msg.key == _key)
-            )
-
-    return (validate, None if exclude_dims is None else tuple(exclude_dims), include_key, tuple(extra), result)
-
-
 class Stateful(ABC, typing.Generic[StateType]):
     """
     Mixin class for stateful processors. DO NOT use this class directly.
@@ -219,20 +44,12 @@ class Stateful(ABC, typing.Generic[StateType]):
 
     _state: StateType
 
-    _hash_witness: typing.ClassVar[tuple | None] = None
-    """The objects the last :meth:`_message_hash` result was derived from.
+    _config_id: int | None = None
+    """The previous message's :attr:`~ezmsg.util.messages.axisarray.AxisArray.config_id`.
 
-    Recomputing the hash means walking the dims, reaching into the axes and
-    building a tuple to hash -- and in a steady stream the answer is the same
-    every time. A producer that builds its per-stream axes once and replaces only
-    the stream axis per message (the template idiom every ezmsg source uses) hands
-    every consumer the *same coordinate axis object* for the life of the stream,
-    so identity is enough to prove the hash cannot have changed. Since ezmsg
-    3.10.0b5 that usually holds across a process boundary too: the receiving
-    channel substitutes one shared object for a coordinate axis it already holds.
-
-    Shadowed by an instance attribute once set. ``None`` means "no witness" and
-    is the safe state: it costs a full recomputation, never a wrong answer.
+    While messages declare the same non-zero id, their configuration is unchanged and
+    :meth:`_hash_message` is not consulted. ``None`` matches no message, so the
+    next one is hashed.
     """
 
     STREAMING_DIMS: typing.ClassVar[tuple[str, ...]] = _STREAMING_DIMS
@@ -259,10 +76,9 @@ class Stateful(ABC, typing.Generic[StateType]):
     @state.setter
     def state(self, state: StateType | bytes | None) -> None:
         if state is not None:
-            # The witness describes the message the *previous* state was built
-            # from. Restoring state from elsewhere leaves it describing nothing,
-            # and a match against it would return a hash for state that is gone.
-            self._hash_witness = None
+            # State restored from elsewhere may not belong to the stream's current
+            # config_id: hash the next message and compare it with the restored hash.
+            self._config_id = None
             if isinstance(state, bytes):
                 self._state = pickle.loads(state)
             else:
@@ -272,31 +88,38 @@ class Stateful(ABC, typing.Generic[StateType]):
         """
         Check if the message metadata indicates a need for state reset.
 
-        For a message that declares :attr:`~ezmsg.util.messages.axisarray.AxisArray.stream_dim`,
-        the default keys on everything describing the stream's *shape and
+        The default is the message's declared
+        :attr:`~ezmsg.util.messages.axisarray.AxisArray.config_id`, so a
+        processor resets on *every* change of it: layout, dtype, array backend,
+        axis units, and anything a source folded into the id (e.g. value scaling).
+
+        For a message that does not declare one (``config_id == 0``, or not an
+        ``AxisArray``) it falls back to the layout hash, :meth:`_message_hash`,
+        computed on every message. That keys on the stream's *shape and
         identity* but not its per-message extent: the message key, its dims, the
-        length of every dimension except the one it streams along, the
-        coordinate values on those dimensions, and the gain and offset of any
-        linear axis among them. See :meth:`_message_hash`.
+        array backend and dtype, the length of every dimension except the one it streams
+        along, the coordinate values on those dimensions, and the gain and
+        offset of any linear axis among them. For a message that does not
+        declare :attr:`~ezmsg.util.messages.axisarray.AxisArray.stream_dim` the
+        streaming dimension falls back to :attr:`STREAMING_DIMS`.
 
-        A message that does not declare it falls back to
-        :attr:`STREAMING_DIMS`. That fallback is a guess, and a wrong guess is
-        not a small error: name a dimension that is actually stable and the
-        processor stops noticing real changes to it; name one that grows and it
-        resets on every message. It is right for the common ``(time, ch)``
-        stream and wrong downstream of a windowing stage.
-
-        Override to add something the default cannot know about -- a dtype the
-        state depends on, a value derived from the processor's own state -- or
-        to *narrow* it, for a processor whose state genuinely does not depend on
-        channel identity. In either case prefer calling :meth:`_message_hash`
+        Override only to *narrow* the default: to veto resets on id changes the
+        state genuinely does not depend on, e.g. a processor whose state does
+        not depend on channel identity. Prefer returning :meth:`_message_hash`
         with the appropriate arguments over rebuilding the hash from scratch, so
-        that the axis-value coverage is not silently lost.
+        that the axis-value coverage is not silently lost. An override replaces
+        the id, so it must itself cover every change the state *does* depend on.
 
         Processors whose state is insensitive to everything may return a
         constant. All processors' initial state has ``.hash = -1``, so any
         constant forces exactly one reset on the first message.
+
+        On a stream that declares ``config_id`` this is called only when the id
+        changes; on a stream that does not, it is called on every message.
         """
+        # Ids are positive 63-bit, so they never collide with the 0 / -1 sentinels.
+        if isinstance(message, AxisArray) and message.config_id:
+            return message.config_id
         return self._message_hash(message)
 
     def _message_hash(
@@ -312,7 +135,9 @@ class Stateful(ABC, typing.Generic[StateType]):
 
         Folds in, in dimension order:
 
-        * ``message.key`` (unless *include_key* is False) and ``message.dims``
+        * ``message.key`` (unless *include_key* is False), ``message.dims``, the
+          array backend (top-level module of ``type(message.data)``: numpy, mlx, ...)
+          and the data's ``dtype`` (``None`` for data that has none)
         * for each dimension other than the stream dimension: its length, plus
           either the coordinate axis's
           :attr:`~ezmsg.util.messages.axisarray.CoordinateAxis.fingerprint` or a
@@ -347,21 +172,6 @@ class Stateful(ABC, typing.Generic[StateType]):
         if not isinstance(message, AxisArray):
             return 0
 
-        # The witness is checked before anything else is derived: if nothing it
-        # was built from has changed identity, the answer cannot have changed.
-        # Its validator runs first because it is the most discriminating -- a
-        # producer that rebuilds its axes fails on one `is` rather than after the
-        # bookkeeping comparisons.
-        witness = self._hash_witness
-        if (
-            witness is not None
-            and witness[0](message)
-            and witness[2] is include_key
-            and witness[3] == extra
-            and (witness[1] is None if exclude_dims is None else witness[1] == tuple(exclude_dims))
-        ):
-            return witness[4]
-
         # The producer renamed the dims and so is the only party that reliably
         # knows which one grows; fall back to the class default when it is silent.
         stream_dim = message.stream_dim
@@ -372,15 +182,18 @@ class Stateful(ABC, typing.Generic[StateType]):
         else:
             exclude = (stream_dim, *exclude_dims)
 
-        # Hoisted out of the loop: this runs on every message of every stream,
-        # so the repeated attribute lookups are worth removing. A tuple rather
+        # Hoisted out of the loop: this runs on every message of a stream that
+        # does not declare config_id, so the repeated attribute lookups are
+        # worth removing. A tuple rather
         # than a set for `exclude` -- it holds one or two entries in practice,
         # where a linear scan beats building a set.
         dims = message.dims
         axes = message.axes
-        shape = message.data.shape
+        data = message.data
+        shape = data.shape
         parts: list[typing.Any] = [message.key] if include_key else []
-        parts.append(tuple(dims))
+        # The array backend (numpy, mlx, torch, ...) and dtype, as ezmsg's compute_config_id reads them.
+        parts.append((tuple(dims), type(data).__module__.partition(".")[0], getattr(data, "dtype", None)))
 
         for idx, dim in enumerate(dims):
             axis = axes.get(dim)
@@ -404,14 +217,7 @@ class Stateful(ABC, typing.Generic[StateType]):
                     parts.append((gain, axis.offset))
 
         parts.extend(extra)
-        result = hash(tuple(parts))
-
-        # Rebuild the witness when the answer changed -- a reset is about to run,
-        # so the cost lands where it is already expensive -- or when there is no
-        # witness at all, which is how one is established after a state restore.
-        if witness is None or result != getattr(self, "_hash", None):
-            self._hash_witness = _build_witness(message, dims, shape, exclude, exclude_dims, include_key, extra, result)
-        return result
+        return hash(tuple(parts))
 
     @abstractmethod
     def _reset_state(self, *args: typing.Any, **kwargs: typing.Any) -> None:
@@ -440,6 +246,37 @@ class BaseStatefulProcessor(
     or BaseStatefulTransformer for operations that do return a result.
     """
 
+    VERIFY_OUTPUT_CONFIG: typing.ClassVar[bool] = True
+    """Check that the output's ``config_id`` changes whenever its layout does.
+
+    Downstream processors trust :attr:`~ezmsg.util.messages.axisarray.AxisArray.config_id`
+    and keep their state while it is unchanged, so a processor whose output layout
+    changes (e.g. a settings change selects different channels) must set a new one.
+    When enabled, the first declared ``AxisArray`` output after a reset (`_reset_state`,
+    not `_reset_segment`) and any output whose ``config_id`` changes are hashed
+    (:meth:`_message_hash`); a layout change under an unchanged ``config_id`` is warned
+    about once per class, and from then on the outputs carry a corrected ``config_id``.
+    Other outputs cost only a comparison of ``config_id``, so classes do not need to
+    opt out for speed. Set False to turn the check off.
+
+    Known limit: a processor that changes its output layout with no reset (e.g. from a
+    field in ``NONRESET_SETTINGS_FIELDS``, or from adaptive state) is not caught.
+    """
+
+    WARN_UNDECLARED_CONFIG: typing.ClassVar[bool] = True
+    """Warn, once per class, on receiving an ``AxisArray`` with no ``config_id``.
+
+    Set False only on a processor whose job is to receive such messages, such as
+    the adapter that stamps a ``config_id`` on them. Read only for an undeclared message.
+    """
+
+    _out_hash: int | None = None
+    _out_config_id: int = 0
+    _out_changes: int = 0
+    """How many output layout changes arrived without a new ``config_id``."""
+    _verify_pending: bool = True
+    """Hash the next declared ``AxisArray`` output; set by a full reset."""
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._hash = -1
@@ -451,10 +288,7 @@ class BaseStatefulProcessor(
     def _request_reset(self) -> None:
         # Invalidate the hash so the next __call__ / __acall__ triggers
         # _reset_state(message) even if the message metadata hasn't changed.
-        # The witness has to go with it: it would otherwise answer with the hash
-        # this line is trying to invalidate.
         self._hash = -1
-        self._hash_witness = None
 
     @abstractmethod
     def _reset_state(self, message: typing.Any) -> None:
@@ -495,37 +329,107 @@ class BaseStatefulProcessor(
             return self._reset_segment(message)
         await self._areset_state(message)
 
-    def _prepare_state(self, message: typing.Any) -> None:
-        """Reset before processing ``message`` if its layout or its segment changed."""
+    def _changed_hash(self, message: typing.Any, config_id: int) -> int | None:
+        """``_hash_message(message)`` if it differs from the current hash, else None."""
+        if (
+            not config_id
+            and self.WARN_UNDECLARED_CONFIG
+            and type(self) not in _warned_undeclared
+            and isinstance(message, AxisArray)
+        ):
+            _warned_undeclared.add(type(self))
+            logger.warning(
+                f"{type(self).__name__} is receiving AxisArray messages with no config_id "
+                f"(key={message.key!r}), so it is falling back to hashing the layout on every message. "
+                "Fix this by having the source set config_id "
+                "(ezmsg.util.messages.axisarray.compute_config_id) "
+                "or by inserting a StreamStamp node (ezmsg-sigproc) after the source."
+            )
         msg_hash = self._hash_message(message)
+        self._config_id = config_id
+        return None if msg_hash == self._hash else msg_hash
+
+    def _prepare_state(self, message: typing.Any) -> None:
+        """Reset before processing ``message`` if its layout or its segment changed.
+
+        A message whose ``config_id`` is declared and unchanged is not hashed; a
+        hash of -1 (set by `_request_reset`, or directly) still forces a reset.
+        """
+        config_id = getattr(message, "config_id", 0)
         segment = getattr(message, "segment", None)
-        if msg_hash != self._hash:
+        msg_hash = None
+        if config_id != self._config_id or not config_id or self._hash == -1:
+            msg_hash = self._changed_hash(message, config_id)
+        if msg_hash is not None:
             self._reset_state(message)
             self._hash = msg_hash
+            self._verify_pending = True
         elif segment != self._segment:
             self._reset_segment(message)
         self._segment = segment
 
     async def _aprepare_state(self, message: typing.Any) -> None:
-        msg_hash = self._hash_message(message)
+        config_id = getattr(message, "config_id", 0)
         segment = getattr(message, "segment", None)
-        if msg_hash != self._hash:
+        msg_hash = None
+        if config_id != self._config_id or not config_id or self._hash == -1:
+            msg_hash = self._changed_hash(message, config_id)
+        if msg_hash is not None:
             await self._areset_state(message)
             self._hash = msg_hash
+            self._verify_pending = True
         elif segment != self._segment:
             await self._areset_segment(message)
         self._segment = segment
+
+    def _verify_output(self, output: typing.Any) -> typing.Any:
+        """Return ``output``, with a corrected ``config_id`` once its layout has changed unannounced.
+
+        See :attr:`VERIFY_OUTPUT_CONFIG`. The output is hashed only when its layout can
+        have changed: it is the first declared output after a full reset, or its
+        ``config_id`` differs from the previous output's. A processor that changes its
+        output layout with no reset is not caught. The remembered output hash and id
+        survive `_request_reset` and a state restore: they describe what downstream last
+        received, and a settings change is exactly when an unannounced change happens.
+        """
+        if not isinstance(output, AxisArray):
+            return output
+        config_id = output.config_id
+        if not config_id:
+            return output
+        if self._verify_pending or config_id != self._out_config_id:
+            self._verify_pending = False
+            out_hash = self._message_hash(output)
+            if out_hash != self._out_hash:
+                if config_id == self._out_config_id:
+                    self._out_changes += 1
+                    if type(self) not in _warned_unannounced:
+                        _warned_unannounced.add(type(self))
+                        logger.warning(
+                            f"{type(self).__name__}'s output layout changed without a new config_id "
+                            f"(key={output.key!r}), so downstream processors would keep stale state. "
+                            "baseproc is correcting the config_id on its outputs. Fix this by having "
+                            f"{type(self).__name__} set a new config_id on its outputs whenever its output "
+                            "layout changes (ezmsg.util.messages.axisarray.chain_config_id)."
+                        )
+                self._out_hash = out_hash
+            self._out_config_id = config_id
+        if self._out_changes:
+            return replace(output, config_id=chain_config_id(config_id, self._out_changes))
+        return output
 
     @abstractmethod
     def _process(self, message: typing.Any) -> typing.Any: ...
 
     def __call__(self, message: typing.Any) -> typing.Any:
         self._prepare_state(message)
-        return self._process(message)
+        output = self._process(message)
+        return self._verify_output(output) if self.VERIFY_OUTPUT_CONFIG else output
 
     async def __acall__(self, message: typing.Any) -> typing.Any:
         await self._aprepare_state(message)
-        return await self._aprocess(message)
+        output = await self._aprocess(message)
+        return self._verify_output(output) if self.VERIFY_OUTPUT_CONFIG else output
 
     def stateful_op(
         self,
@@ -603,6 +507,8 @@ class BaseStatefulConsumer(
     Base class for stateful message consumers that don't produce output.
     This class merely overrides the type annotations of BaseStatefulProcessor.
     """
+
+    VERIFY_OUTPUT_CONFIG = False  # No output to verify.
 
     @classmethod
     def get_message_type(cls, dir: str) -> type[MessageInType] | None:
@@ -709,13 +615,15 @@ class BaseAdaptiveTransformer(
         """Train on the message, then run inference and return the result."""
         self._prepare_state(message)
         self.partial_fit(message)
-        return self._process(message)
+        output = self._process(message)
+        return self._verify_output(output) if self.VERIFY_OUTPUT_CONFIG else output
 
     async def apartial_fit_transform(self, message: AxisArray) -> MessageOutType:
         """Async variant of partial_fit_transform."""
         await self._aprepare_state(message)
         await self.apartial_fit(message)
-        return await self._aprocess(message)
+        output = await self._aprocess(message)
+        return self._verify_output(output) if self.VERIFY_OUTPUT_CONFIG else output
 
 
 class BaseAsyncTransformer(
@@ -743,4 +651,5 @@ class BaseAsyncTransformer(
         # Note: In Python 3.12, we can invoke this with `await obj(message)`
         # Earlier versions must be explicit: `await obj.__acall__(message)`
         await self._aprepare_state(message)
-        return await self._aprocess(message)
+        output = await self._aprocess(message)
+        return self._verify_output(output) if self.VERIFY_OUTPUT_CONFIG else output
