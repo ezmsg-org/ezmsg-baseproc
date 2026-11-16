@@ -133,7 +133,10 @@ class BaseClockDrivenProducer(
         Use this to pre-compute values, create templates, etc.
 
         Args:
-            time_axis: TimeAxis with the output sampling rate (fs) and initial offset.
+            time_axis: The clock tick that triggered the reset. Its ``gain`` is the clock's
+                period, not ``1 / fs``: build an output template's stream axis from
+                ``settings.fs`` instead, so that a ``config_id`` computed from the template
+                matches the outputs.
         """
         ...
 

@@ -6,13 +6,20 @@ import dataclasses
 import ezmsg.core as ez
 import numpy as np
 import pytest
-from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray, compute_config_id
 
 from ezmsg.baseproc import (
     BaseAdaptiveTransformer,
     BaseAsyncTransformer,
+    BaseClockDrivenProducer,
+    BaseClockDrivenUnit,
+    BaseProducer,
+    BaseProducerUnit,
     BaseStatefulTransformer,
+    ClockDrivenSettings,
+    ClockDrivenState,
     SegmentTracker,
+    end_of_stream,
     find_gaps,
 )
 
@@ -170,7 +177,7 @@ class TestFindGaps:
 class TestSegmentTracker:
     def test_contiguous_chunks_stay_in_one_segment(self):
         tracker = SegmentTracker(tolerance=0.5 / FS)
-        assert [tracker.update(i * 10 / FS, 10, 1 / FS) for i in range(5)] == [0] * 5
+        assert len({tracker.update(i * 10 / FS, 10, 1 / FS) for i in range(5)}) == 1
 
     def test_a_jump_or_a_step_back_starts_a_segment(self):
         tracker = SegmentTracker(tolerance=0.5 / FS)
@@ -187,8 +194,131 @@ class TestSegmentTracker:
 
     def test_bump_starts_a_segment_without_a_gap(self):
         tracker = SegmentTracker(tolerance=0.5 / FS)
-        tracker.update(0.0, 10, 1 / FS)
+        assert tracker.update(0.0, 10, 1 / FS) == 0
         assert tracker.bump() == 1
         # Whatever the next offset is, it belongs to the segment bump() started.
         assert tracker.update(50.0, 10, 1 / FS) == 1
         assert tracker.update(50.1, 10, 1 / FS) == 1
+
+    def test_a_marker_at_a_known_gap_then_the_data_after_it(self):
+        """(a) A reader ends a section before a gap it knows about; the next chunk's offset shows the gap too."""
+        tracker = SegmentTracker(tolerance=0.5 / FS)
+        before = msg(tracker.update(0.0, 10, 1 / FS))
+        eos = tracker.end_of_stream(before)
+        assert (before.segment, eos.segment, tracker.update(5.0, 10, 1 / FS)) == (0, 1, 2)
+
+    def test_a_marker_at_the_end_of_the_file(self):
+        """(b) Nothing follows the marker."""
+        tracker = SegmentTracker(tolerance=0.5 / FS)
+        for i in range(3):
+            last = msg(tracker.update(i * 10 / FS, 10, 1 / FS), i=i)
+        assert (last.segment, tracker.end_of_stream(last).segment, tracker.segment) == (0, 1, 1)
+
+    def test_data_continuing_after_a_marker_is_not_in_its_segment(self):
+        """(c) The marker ended its segment: data after it starts the next one even without a gap."""
+        tracker = SegmentTracker(tolerance=0.5 / FS)
+        before = msg(tracker.update(0.0, 10, 1 / FS))
+        eos = tracker.end_of_stream(before)
+        after = tracker.update(eos.axes["time"].offset, 10, 1 / FS)
+        assert (before.segment, eos.segment, after) == (0, 1, 2)
+        assert tracker.update(eos.axes["time"].offset + 10 / FS, 10, 1 / FS) == 2
+
+    def test_bump_after_a_marker_starts_one_segment(self):
+        tracker = SegmentTracker(tolerance=0.5 / FS)
+        eos = tracker.end_of_stream(msg(tracker.update(0.0, 10, 1 / FS)))
+        assert (eos.segment, tracker.bump(), tracker.update(9.0, 10, 1 / FS)) == (1, 2, 2)
+
+    def test_successive_gaps_never_reuse_a_number(self):
+        tracker = SegmentTracker(tolerance=0.5 / FS)
+        out = []
+        for start in (0.0, 5.0, 9.0):
+            chunks = [msg(tracker.update(start + i * 10 / FS, 10, 1 / FS), i=i) for i in range(2)]
+            out += [m.segment for m in chunks] + [tracker.end_of_stream(chunks[-1]).segment]
+        assert out == [0, 0, 1, 2, 2, 3, 4, 4, 5]
+
+
+class TestEndOfStream:
+    def test_ends_a_linear_stream_just_after_its_last_sample(self):
+        last = AxisArray(
+            np.arange(20.0).reshape(2, 10),
+            dims=["ch", "time"],
+            axes={
+                "ch": AxisArray.CoordinateAxis(np.array(["a", "b"]), dims=["ch"]),
+                "time": AxisArray.TimeAxis(fs=FS, offset=1.0),
+            },
+            attrs={"subject": 1},
+            key="src",
+            stream_dim="time",
+            segment=7,
+        )
+        last.config_id = compute_config_id(last)
+        eos = end_of_stream(last)
+        assert eos.data.shape == (2, 0) and eos.data.dtype == last.data.dtype
+        assert eos.data.base is None  # its own array, not a view keeping the last buffer alive
+        assert eos.axes["time"].offset == pytest.approx(1.0 + 10 / FS)
+        assert eos.axes["time"].gain == last.axes["time"].gain and eos.axes["ch"] is last.axes["ch"]
+        assert (eos.dims, eos.key, eos.attrs, eos.stream_dim) == (last.dims, last.key, last.attrs, last.stream_dim)
+        assert eos.config_id == last.config_id == compute_config_id(eos)
+        assert eos.segment == 8
+
+    def test_empties_a_coordinate_stream_axis(self):
+        # No stream_dim declared: falls back to "time", as consumers do.
+        last = AxisArray(
+            np.zeros((3, 2), dtype=np.int16),
+            dims=["time", "ch"],
+            axes={"time": AxisArray.CoordinateAxis(np.array([0.0, 0.5, 7.0]), dims=["time"], unit="s")},
+        )
+        eos = end_of_stream(last)
+        assert eos.data.shape == (0, 2) and eos.data.dtype == np.int16
+        assert eos.axes["time"].data.shape == (0,) and eos.axes["time"].unit == "s"
+        assert eos.segment == last.segment + 1
+
+    def test_the_data_after_a_gap_does_not_continue_it(self):
+        """A reader keeping its own count continues it from the marker's segment."""
+        before = msg(4)
+        eos = end_of_stream(before)
+        after = msg(eos.segment + 1, i=50)
+        assert (before.segment, eos.segment, after.segment) == (4, 5, 6)
+
+    def test_resets_a_stateful_processor_without_a_layout_change(self):
+        proc = Counting(Settings())
+        last = msg(3)
+        proc(last)
+        proc(end_of_stream(last))
+        assert proc.state.resets == 2
+
+
+class _Src(BaseProducer[Settings, AxisArray]):
+    async def _produce(self) -> AxisArray:
+        return end_of_stream(msg(3))
+
+
+class _SrcUnit(BaseProducerUnit[Settings, AxisArray, _Src]):
+    SETTINGS = Settings
+
+
+class _Clocked(BaseClockDrivenProducer[ClockDrivenSettings, ClockDrivenState]):
+    def _reset_state(self, time_axis) -> None: ...
+
+    def _produce(self, n_samples: int, time_axis) -> AxisArray:
+        return end_of_stream(msg(3))
+
+
+class _ClockedUnit(BaseClockDrivenUnit[ClockDrivenSettings, _Clocked]):
+    SETTINGS = ClockDrivenSettings
+
+
+def test_producer_units_publish_the_end_of_stream_message():
+    src = _SrcUnit(Settings())
+    src.create_producer()
+    clocked = _ClockedUnit(ClockDrivenSettings(fs=FS, n_time=10))
+    clocked.create_processor()
+
+    async def first(gen):
+        out = await gen.__anext__()
+        await gen.aclose()
+        return out
+
+    for gen in (src.produce(), clocked.on_clock(AxisArray.LinearAxis(gain=0.1, offset=0.0))):
+        _, out = asyncio.run(first(gen))
+        assert out.data.shape == (0, 2)

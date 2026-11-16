@@ -16,6 +16,7 @@ from ezmsg.baseproc import (
     BaseTransformer,
     BaseTransformerUnit,
     CompositeProcessor,
+    end_of_stream,
 )
 
 FS = 100.0
@@ -225,6 +226,11 @@ def test_unit_does_not_flush_while_segment_and_config_id_are_unchanged():
 
 def test_unit_does_not_flush_before_the_first_message():
     assert drive(HoldUnit, [replace(msg(0, segment=3), config_id=7)]) == [list(range(7))]
+
+
+def test_end_of_stream_releases_the_held_tail():
+    out = drive(HoldUnit, [msg(0), msg(10), end_of_stream(msg(10))])
+    assert out == [list(range(7)), list(range(7, 17)), [17, 18, 19], []]
 
 
 def test_unit_yields_once_per_message_when_nothing_is_held():
