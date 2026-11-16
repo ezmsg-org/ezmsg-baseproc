@@ -1,8 +1,10 @@
 """Unit tests for ezmsg.baseproc.clockdriven module."""
 
+import logging
+
 import numpy as np
 import pytest
-from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.axisarray import AxisArray, compute_config_id, replace
 
 from ezmsg.baseproc import (
     BaseClockDrivenProducer,
@@ -371,3 +373,60 @@ class TestClockDrivenStateManagement:
         assert producer._hash_message(tick1) == 0
         assert producer._hash_message(tick2) == 0
         assert producer._hash_message(tick3) == 0
+
+
+class StampedSettings(ClockDrivenSettings):
+    n_ch: int = 2
+
+
+@processor_state
+class StampedState(ClockDrivenState):
+    template: AxisArray | None = None
+
+
+config_id_calls = []
+
+
+class StampedProducer(BaseClockDrivenProducer[StampedSettings, StampedState]):
+    """Declares its stream the way a clock-driven source should: on the template, at reset."""
+
+    def _reset_state(self, time_axis: AxisArray.LinearAxis) -> None:
+        n_ch = self.settings.n_ch
+        ch_axis = AxisArray.CoordinateAxis(np.arange(n_ch), dims=["ch"])
+        template = AxisArray(
+            np.zeros((0, n_ch)),
+            dims=["time", "ch"],
+            # Not `time_axis`, the clock tick: config_id digests the stream axis's gain, which must be 1 / fs.
+            axes={"time": AxisArray.TimeAxis(fs=self.settings.fs), "ch": ch_axis},
+            stream_dim="time",
+            # State outlives a reset: a reset continues nothing, so it starts the next segment.
+            segment=0 if self._state.template is None else self._state.template.segment + 1,
+        )
+        config_id_calls.append(None)
+        template.config_id = compute_config_id(template)
+        self._state.template = template
+
+    def _produce(self, n_samples: int, time_axis: AxisArray.LinearAxis) -> AxisArray:
+        template = self._state.template
+        data = np.zeros((n_samples, self.settings.n_ch))
+        return replace(template, data=data, axes={**template.axes, "time": time_axis})
+
+
+def test_a_stamped_template_declares_every_output(caplog):
+    config_id_calls.clear()
+    producer = StampedProducer(StampedSettings(fs=100.0, n_time=10))
+    tick = AxisArray.LinearAxis(gain=0.1, offset=0.0)
+    with caplog.at_level(logging.WARNING, logger="ezmsg.baseproc.stateful"):
+        first = [producer(tick) for _ in range(5)]
+        producer.update_settings(StampedSettings(fs=100.0, n_time=10, n_ch=3))
+        second = [producer(tick) for _ in range(5)]
+    assert len({o.config_id for o in first}) == len({o.config_id for o in second}) == 1
+    assert first[0].config_id != second[0].config_id
+    assert first[0].config_id == compute_config_id(first[0])
+    # Computed once per configuration, not per message; the output check found nothing to correct.
+    assert len(config_id_calls) == 2
+    assert not caplog.records
+    # A reset starts a new segment.
+    assert (first[0].segment, second[0].segment) == (0, 1)
+    restarted = StampedProducer(StampedSettings(fs=100.0, n_time=10))(tick)
+    assert (restarted.config_id, restarted.segment) == (first[0].config_id, 0)
