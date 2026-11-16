@@ -299,6 +299,30 @@ class CompositeProcessor(
             result = await proc.asend(result)
         return self._post_process(result)
 
+    def flush(self, message: MessageInType | None = None) -> MessageOutType | None:
+        """
+        Flush the chain: each child processes the tail of the one before it, then emits what it holds.
+        Children without ``flush`` (e.g. legacy generators) process the tail if there is one,
+        and otherwise pass None along.
+        """
+        tail = message
+        for proc in self._procs.values():
+            if hasattr(proc, "flush"):
+                tail = proc.flush(tail)
+            elif tail is not None:
+                tail = proc(tail) if callable(proc) else proc.send(tail)
+        return self._post_process(tail)
+
+    async def aflush(self, message: MessageInType | None = None) -> MessageOutType | None:
+        """Async variant of `flush`, using the children's async APIs."""
+        tail = message
+        for proc in self._procs.values():
+            if hasattr(proc, "aflush"):
+                tail = await proc.aflush(tail)
+            elif tail is not None:
+                tail = await proc.asend(tail)
+        return self._post_process(tail)
+
     def stateful_op(
         self,
         state: dict[str, tuple[typing.Any, int]] | None,

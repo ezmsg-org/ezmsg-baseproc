@@ -134,6 +134,26 @@ class BaseProcessor(ABC, typing.Generic[SettingsType, MessageInType, MessageOutT
         """Alias for __acall__."""
         return await self.__acall__(message)
 
+    def flush(self, message: typing.Any = None) -> typing.Any:
+        """Process ``message`` as the last chunk, if given, then emit everything still held.
+
+        Called when the stream is about to break (e.g. before the first message of a
+        new :attr:`~ezmsg.util.messages.axisarray.AxisArray.segment`), so samples a
+        processor has taken in but not yet emitted -- a partial window, a delay line --
+        are not dropped by the reset that follows. Returns one message, or None if
+        there is nothing to emit.
+
+        The default holds nothing back: it returns None without a message and
+        ``self(message)`` otherwise. Override in processors that buffer samples.
+        """
+        return None if message is None else self(message)
+
+    async def aflush(self, message: typing.Any = None) -> typing.Any:
+        """Async variant of `flush`. A `flush` override is honoured here too."""
+        if type(self).flush is not BaseProcessor.flush:
+            return self.flush(message)
+        return None if message is None else await self.__acall__(message)
+
     def close(self) -> None:
         """Release any resources held by this processor.
 
