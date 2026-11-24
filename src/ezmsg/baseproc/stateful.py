@@ -433,13 +433,22 @@ class BaseStatefulProcessor(
 
     def stateful_op(
         self,
-        state: tuple[StateType, int] | None,
+        state: tuple[StateType, int, int | None] | tuple[StateType, int] | None,
         message: typing.Any,
-    ) -> tuple[tuple[StateType, int], typing.Any]:
+    ) -> tuple[tuple[StateType, int, int | None], typing.Any]:
+        """Process ``message`` starting from ``state``; return the new state and the result.
+
+        ``state`` is the opaque ``(state, hash, segment)`` tuple a previous call returned, or
+        None to start from this processor's current state. The segment travels with it so that
+        a processor restored from it continues the stream instead of seeing a segment change.
+        A ``(state, hash)`` pair, as returned before the segment was carried, adopts the
+        message's segment.
+        """
         if state is not None:
-            self.state, self._hash = state
+            self.state, self._hash, *segment = state
+            self._segment = segment[0] if segment else getattr(message, "segment", None)
         result = self(message)
-        return (self.state, self._hash), result
+        return (self.state, self._hash, self._segment), result
 
 
 class BaseStatefulProducer(
@@ -533,9 +542,9 @@ class BaseStatefulConsumer(
 
     def stateful_op(
         self,
-        state: tuple[StateType, int] | None,
+        state: tuple[StateType, int, int | None] | tuple[StateType, int] | None,
         message: MessageInType,
-    ) -> tuple[tuple[StateType, int], None]:
+    ) -> tuple[tuple[StateType, int, int | None], None]:
         state, _ = super().stateful_op(state, message)
         return state, None
 
@@ -564,9 +573,9 @@ class BaseStatefulTransformer(
 
     def stateful_op(
         self,
-        state: tuple[StateType, int] | None,
+        state: tuple[StateType, int, int | None] | tuple[StateType, int] | None,
         message: MessageInType,
-    ) -> tuple[tuple[StateType, int], MessageOutType]:
+    ) -> tuple[tuple[StateType, int, int | None], MessageOutType]:
         return super().stateful_op(state, message)
 
 
