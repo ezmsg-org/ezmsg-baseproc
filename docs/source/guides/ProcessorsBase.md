@@ -2,6 +2,22 @@
 
 The `ezmsg.baseproc` module contains the base classes for message processors. The base classes are designed to allow users to create custom processors with minimal errors and minimal repetition of boilerplate code.
 
+<!-- dd:ezmsg-baseproc:start -->
+
+### Processors are independent of the runtime
+
+`ezmsg-baseproc` separates *what* a signal-processing step computes from *where* it runs. The computation lives in a **processor**: an ordinary Python object built from a settings dataclass and called with one message at a time (`out = proc(msg)`, or `await proc.__acall__(msg)` from asynchronous code). A stateful processor keeps whatever it carries between messages, such as filter memory or a partly filled window, in a separate state object. It rebuilds that state by itself whenever the incoming data's layout changes (for example a new sampling rate or channel count), so the caller never has to manage it.
+
+Because a processor needs nothing from the `ezmsg` runtime, the same class can be used in three ways:
+
+- **Offline**: call it in a loop over recorded data in a notebook, script or test, chunk by chunk.
+- **Inside an ezmsg graph**: a thin generic Unit (`BaseTransformerUnit`, `BaseProducerUnit`, `BaseConsumerUnit` and others) wraps the processor, feeds it each message from the Unit's input stream and publishes the result.
+- **In another runtime**: any host that can call a Python function, synchronously or from its own event loop, can drive the processor directly, without starting an `ezmsg` graph.
+
+Adaptive processors (`BaseAdaptiveTransformer`) add `partial_fit`, which updates a model from labelled data without producing output, and `partial_fit_transform`, which updates it and then runs inference. A decoder can therefore be fitted offline on recorded sessions and then run, or keep adapting, online with the identical code, which removes a common source of mismatch between offline analysis and closed-loop behaviour.
+
+<!-- dd:ezmsg-baseproc:end -->
+
 > The information below was written at the time of a major refactor to help collate the design decisions and to help with future refactoring. However, it may be outdated or incomplete. Please refer to the source code for the most accurate information.
 
 ### Generic TypeVars
