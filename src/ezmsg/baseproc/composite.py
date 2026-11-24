@@ -97,6 +97,13 @@ def _get_processor_message_type(
     return typing.Any
 
 
+async def _asend(proc: typing.Any, message: typing.Any) -> typing.Any:
+    """Send ``message`` to a child through its async API, or call it if it is a plain callable."""
+    if hasattr(proc, "asend"):
+        return await proc.asend(message)
+    return proc(message)
+
+
 def _has_stateful_op(proc: typing.Any) -> typing.TypeGuard[Stateful]:
     """
     Check if the processor has a stateful_op method.
@@ -296,7 +303,7 @@ class CompositeProcessor(
         """
         result = message
         for proc in self._procs.values():
-            result = await proc.asend(result)
+            result = await _asend(proc, result)
         return self._post_process(result)
 
     def flush(self, message: MessageInType | None = None) -> MessageOutType | None:
@@ -320,7 +327,7 @@ class CompositeProcessor(
             if hasattr(proc, "aflush"):
                 tail = await proc.aflush(tail)
             elif tail is not None:
-                tail = await proc.asend(tail)
+                tail = await _asend(proc, tail)
         return self._post_process(tail)
 
     def stateful_op(
@@ -407,7 +414,7 @@ class CompositeProducer(
         procs = list(self._procs.values())
         result = await procs[0].__anext__()
         for proc in procs[1:]:
-            result = await proc.asend(result)
+            result = await _asend(proc, result)
         return self._post_process(result)
 
     def stateful_op(

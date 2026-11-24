@@ -1,5 +1,6 @@
 """Tests for ezmsg-baseproc package."""
 
+import asyncio
 import dataclasses
 import pickle
 from types import NoneType
@@ -8,6 +9,7 @@ from typing import Any
 import numpy as np
 import pytest
 from ezmsg.util.messages.axisarray import AxisArray
+from ezmsg.util.messages.modify import ModifyAxisSettings, ModifyAxisTransformer
 
 from ezmsg.baseproc import (
     BaseAdaptiveTransformer,
@@ -914,6 +916,21 @@ class TestBaseStatefulProducer:
 
 
 # -- Tests for CompositeProcessor --
+
+
+class _RenameComposite(CompositeProcessor[MockSettings, AxisArray, AxisArray]):
+    @staticmethod
+    def _initialize_processors(settings):
+        # A plain callable from ezmsg core, not a baseproc processor: it has no asend.
+        return {"rename": ModifyAxisTransformer(ModifyAxisSettings(name_map={"win": "time"}))}
+
+
+def test_composite_async_calls_plain_callable_child():
+    msg = AxisArray(np.zeros((2, 3)), dims=["win", "ch"])
+    proc = _RenameComposite(MockSettings())
+    assert proc(msg).dims == ["time", "ch"]
+    assert asyncio.run(proc.__acall__(msg)).dims == ["time", "ch"]
+    assert asyncio.run(proc.aflush(msg)).dims == ["time", "ch"]
 
 
 class TestCompositeProcessor:
