@@ -795,6 +795,42 @@ class TestBaseStatefulTransformer:
         assert new_state[0].iterations == 1
 
 
+@processor_state
+class _SumState:
+    total: float = 0.0
+
+
+class _RunningSum(BaseStatefulTransformer[MockSettings, AxisArray, float, _SumState]):
+    def _reset_state(self, message: AxisArray) -> None:
+        self._state.total = 0.0
+
+    def _process(self, message: AxisArray) -> float:
+        self._state.total += float(message.data.sum())
+        return self._state.total
+
+
+class TestStatefulOpRestore:
+    @staticmethod
+    def _msg(segment: int = 3) -> AxisArray:
+        return AxisArray(np.ones((2, 1)), dims=["time", "ch"], segment=segment)
+
+    def test_restored_state_continues_in_a_new_processor(self):
+        state, _ = _RunningSum().stateful_op(None, self._msg())
+        state = pickle.loads(pickle.dumps(state))
+        _, result = _RunningSum().stateful_op(state, self._msg())
+        assert result == 4.0
+
+    def test_segment_change_after_restore_still_resets(self):
+        state, _ = _RunningSum().stateful_op(None, self._msg())
+        _, result = _RunningSum().stateful_op(state, self._msg(segment=4))
+        assert result == 2.0
+
+    def test_legacy_pair_adopts_message_segment(self):
+        (st, h, _seg), _ = _RunningSum().stateful_op(None, self._msg())
+        _, result = _RunningSum().stateful_op((st, h), self._msg(segment=9))
+        assert result == 4.0
+
+
 # Helper to create an AxisArray with trigger in attrs for testing BaseAdaptiveTransformer
 def mock_sample_message():
     return AxisArray(
